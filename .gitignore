@@ -1,0 +1,56 @@
+# =========================
+# Python & Утилиты
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# =========================
+# Виртуальные окружения
+# =========================
+venv/
+.venv/
+env/
+.env
+
+# =========================
+# Frontend (Vue.js)
+# =========================
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# =========================
+# Локальные данные (Docker & Инфраструктура)
+# =========================
+# ❗️ Очень важно не закоммитить базу данных и файлы из MinIO
+data/
+data/postgres/
+data/minio/
+
+# =========================
+# IDE & OS (VS Code, macOS)
+# =========================
+.vscode/
+.idea/
+.DS_Store
+*.swp

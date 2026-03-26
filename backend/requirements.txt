@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+temporalio
+minio
+jinja2
+playwright
+pydantic-settings
+python-multipart

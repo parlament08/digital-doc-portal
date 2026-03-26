@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  # --- База данных (Postgres) ---
+  db:
+    image: postgres:15-alpine
+    container_name: doc_portal_db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: doc_portal
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./data/postgres:/var/lib/postgresql/data
+    networks:
+      - doc-net
+
+  # --- Хранилище файлов (MinIO) ---
+  minio:
+    image: minio/minio
+    container_name: doc_portal_minio
+    ports:
+      - "9000:9000"       # API
+      - "9001:9001"       # Console (Web UI)
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password123
+    volumes:
+      - ./data/minio:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - doc-net
+
+  # --- Temporal Server (Ядро) ---
+  temporal:
+    image: temporalio/auto-setup:1.22.0
+    container_name: doc_portal_temporal
+    ports:
+      - "7233:7233"       # gRPC API (Только он!)
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=user
+      - POSTGRES_PWD=password
+      - POSTGRES_SEEDS=db
+    depends_on:
+      - db
+    networks:
+      - doc-net
+
+  # --- Temporal Web UI (Интерфейс) ---
+  temporal-ui:
+    image: temporalio/ui:2.21.0
+    container_name: doc_portal_temporal_ui
+    ports:
+      - "8082:8080"       # Web UI
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:8082
+    depends_on:
+      - temporal
+    networks:
+      - doc-net
+ 
+  # --- Backend (FastAPI) ---
+  backend:
+    build:
+      context: ./backend
+    container_name: doc_portal_api
+    volumes:
+      - ./backend:/app
+      - ./templates:/app/templates
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/doc_portal
+      - TEMPORAL_URL=temporal:7233
+      - MINIO_URL=http://minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=password123
+    depends_on:
+      - db
+      - temporal
+      - minio
+    networks:
+      - doc-net
+
+networks:
+  doc-net:
+    driver: bridge
