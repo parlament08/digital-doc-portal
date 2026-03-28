@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Инструктаж по технике безопасности</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 40px;
+            color: #333;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #2c3e50;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            margin: 0;
+            color: #2c3e50;
+            font-size: 24px;
+        }
+        .header p {
+            margin: 5px 0 0;
+            color: #7f8c8d;
+            font-size: 14px;
+        }
+        .content {
+            line-height: 1.6;
+            font-size: 14px;
+            text-align: justify;
+        }
+        .signature-block {
+            margin-top: 50px;
+            border: 1px dashed #2980b9;
+            padding: 20px;
+            background-color: #f4f9f9;
+            width: 350px;
+            border-radius: 5px;
+        }
+        .signature-title {
+            font-weight: bold;
+            color: #2980b9;
+            margin-bottom: 10px;
+        }
+        .signature-data {
+            font-size: 13px;
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>Журнал учета инструктажей по ТБ</h1>
+        <p>ООО "Рога и Копыта" | Документ № {{ audit_id }}</p>
+    </div>
+
+    <div class="content">
+        <p>Настоящим подтверждается, что сотрудник успешно прошел инструктаж по теме: <b>«{{ doc_type }}»</b>.</p>
+        <p>Сотрудник ознакомлен с правилами внутреннего трудового распорядка, требованиями охраны труда, пожарной безопасности и электробезопасности.</p>
+        <p>Обязуюсь соблюдать требования инструкций, применять выданные средства индивидуальной защиты и немедленно сообщать руководителю о любых неисправностях оборудования.</p>
+    </div>
+
+    <div class="signature-block">
+        <div class="signature-title">Подписано электронной подписью (ПЭП)</div>
+        <div class="signature-data"><b>Сотрудник (ID):</b> {{ user_id }}</div>
+        <div class="signature-data"><b>Дата подписания:</b> {{ date }}</div>
+        <div class="signature-data"><b>Статус:</b> Ознакомлен и согласен</div>
+    </div>
+
+</body>
+</html>

@@ -1,20 +1,19 @@
 import os
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-# Берем URL базы данных из переменных окружения Docker
-SQLALCHEMY_DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql://user:password@db:5432/doc_portal"
-)
+# Берем URL базы из переменных окружения (которые мы прописали в docker-compose)
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@db:5432/doc_portal")
 
-# Создаем движок SQLAlchemy
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+# engine - это само подключение
+engine = create_engine(DATABASE_URL, echo=False)
 
-# Создаем фабрику сессий
+# SessionLocal - это фабрика сессий для наших эндпоинтов
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Dependency для FastAPI (будет выдавать сессию для каждого запроса)
+Base = declarative_base()
+
+# Зависимость (Dependency) для FastAPI, чтобы каждый запрос получал свою сессию БД
 def get_db():
     db = SessionLocal()
     try:

@@ -1,16 +1,11 @@
-FROM python:3.11-slim
+# Официальный образ Microsoft с уже встроенным Chromium и всеми пакетами (на базе Ubuntu)
+FROM mcr.microsoft.com/playwright/python:v1.41.1-jammy
 
 WORKDIR /app
 
-# 1. Копируем и устанавливаем Python-зависимости
+# Копируем и устанавливаем Python-библиотеки
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 2. Магия Playwright: он сам скачает Chromium и установит все нужные apt-пакеты (libnss3, libxrandr2 и т.д.)
-RUN playwright install --with-deps chromium
-
-# 3. Копируем исходный код
+# Копируем остальной код
 COPY . .
-
-# 4. Запускаем сервер
-CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

@@ -1,19 +1,23 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, func
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import declarative_base
-import uuid
-
-Base = declarative_base()
+from sqlalchemy import Column, Integer, String, DateTime, JSON
+from sqlalchemy.sql import func
+from app.core.database import Base
 
 class AuditTrail(Base):
     __tablename__ = "audit_trail"
 
     id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
-    event_type = Column(String(50), nullable=False) # 'DOCUMENT_SIGNED', 'WORKFLOW_STARTED'
-    user_id = Column(UUID(as_uuid=True), nullable=False)
-    document_id = Column(UUID(as_uuid=True), nullable=False)
-    document_hash = Column(String, nullable=False)
-    metadata_info = Column("metadata", JSON) # JSONB в Postgres: IP, User-Agent
-    prev_row_hash = Column(String)
-    signature_hash = Column(String)
+    
+    # Кто подписывает (например, табельный номер или логин)
+    user_id = Column(String, index=True, nullable=False)
+    
+    # Что подписывает (например, 'safety_instruction')
+    document_type = Column(String, nullable=False)
+    
+    # Статус процесса: GENERATION_IN_PROGRESS -> DOCUMENT_SIGNED_PEP -> ERROR
+    status = Column(String, default="GENERATION_IN_PROGRESS")
+    
+    # Когда нажали кнопку
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Гибкое JSON-поле. Сюда мы запишем путь в MinIO, хэш файла и IP-адрес
+    metadata_info = Column(JSON, default={})

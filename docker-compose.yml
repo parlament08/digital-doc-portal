@@ -1,7 +1,4 @@
-version: '3.8'
-
 services:
-  # --- База данных (Postgres) ---
   db:
     image: postgres:15-alpine
     container_name: doc_portal_db
@@ -12,81 +9,61 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - ./data/postgres:/var/lib/postgresql/data
-    networks:
-      - doc-net
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d doc_portal"]
+      interval: 3s
+      timeout: 5s
+      retries: 5  
 
-  # --- Хранилище файлов (MinIO) ---
   minio:
     image: minio/minio
     container_name: doc_portal_minio
     ports:
-      - "9000:9000"       # API
-      - "9001:9001"       # Console (Web UI)
+      - "9000:9000"
+      - "9001:9001"
     environment:
       MINIO_ROOT_USER: admin
       MINIO_ROOT_PASSWORD: password123
-    volumes:
-      - ./data/minio:/data
     command: server /data --console-address ":9001"
-    networks:
-      - doc-net
+    volumes:
+      - minio_data:/data
 
-  # --- Temporal Server (Ядро) ---
-  temporal:
-    image: temporalio/auto-setup:1.22.0
-    container_name: doc_portal_temporal
-    ports:
-      - "7233:7233"       # gRPC API (Только он!)
-    environment:
-      - DB=postgresql
-      - DB_PORT=5432
-      - POSTGRES_USER=user
-      - POSTGRES_PWD=password
-      - POSTGRES_SEEDS=db
-    depends_on:
-      - db
-    networks:
-      - doc-net
-
-  # --- Temporal Web UI (Интерфейс) ---
-  temporal-ui:
-    image: temporalio/ui:2.21.0
-    container_name: doc_portal_temporal_ui
-    ports:
-      - "8082:8080"       # Web UI
-    environment:
-      - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=http://localhost:8082
-    depends_on:
-      - temporal
-    networks:
-      - doc-net
- 
-  # --- Backend (FastAPI) ---
   backend:
-    build:
-      context: ./backend
+    build: ./backend
     container_name: doc_portal_api
+    restart: always
+    command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend:/app
-      - ./templates:/app/templates
     ports:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql://user:password@db:5432/doc_portal
-      - TEMPORAL_URL=temporal:7233
-      - MINIO_URL=http://minio:9000
-      - MINIO_ACCESS_KEY=admin
-      - MINIO_SECRET_KEY=password123
     depends_on:
-      - db
-      - temporal
-      - minio
-    networks:
-      - doc-net
+      db:
+        condition: service_healthy  # Ждем, пока healthcheck базы не станет зеленым
+      minio:
+        condition: service_started  # Ждем, пока контейнер minio запустится
 
-networks:
-  doc-net:
-    driver: bridge
+  worker:
+    build: ./backend
+    container_name: doc_portal_worker
+    restart: always
+    # Запускаем Celery-воркер, используя код из папки app
+    command: celery -A app.celery_app worker --loglevel=info
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/doc_portal
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      backend:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  minio_data:

@@ -1,90 +1,107 @@
 import asyncio
 import hashlib
 import os
-from datetime import datetime, timedelta
-from temporalio import activity, workflow
-from temporalio.client import Client
-from temporalio.worker import Worker, UnsandboxedWorkflowRunner
-from temporalio.common import RetryPolicy
+from io import BytesIO
 
-# Импорты из нашего проекта
-from app.services.pdf_generator import PDFGenerator
-from app.services.storage import MinioService
+from datetime import datetime
+from jinja2 import Environment, FileSystemLoader
+
+from minio import Minio
+from playwright.async_api import async_playwright
+from sqlalchemy.orm import Session
+
+from app.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.models.audit import AuditTrail
 
-# 1. ACTIVITY (Сама работа)
-# Здесь происходит то, что раньше делал FastAPI: генерация PDF и запись в базу
-@activity.defn
-async def generate_document_activity(data: dict) -> dict:
-    print(f"[{datetime.now()}] Начинаю генерацию PDF для: {data['employee_name']}")
+# Данные для доступа к MinIO (в идеале вынести в .env, но для MVP можно так)
+MINIO_URL = os.environ.get("MINIO_URL", "minio:9000")
+MINIO_USER = os.environ.get("MINIO_ROOT_USER", "admin")
+MINIO_PASS = os.environ.get("MINIO_ROOT_PASSWORD", "password123")
+BUCKET_NAME = "signed-documents"
+
+def get_minio_client():
+    """Подключаемся к хранилищу MinIO"""
+    client = Minio(MINIO_URL, access_key=MINIO_USER, secret_key=MINIO_PASS, secure=False)
+    if not client.bucket_exists(BUCKET_NAME):
+        client.make_bucket(BUCKET_NAME)
+    return client
+
+async def render_pdf_with_playwright(audit_id: int, user_id: str, doc_type: str) -> bytes:
+    """Асинхронная генерация PDF через "безголовый" браузер Chromium и Jinja2"""
     
-    pdf_gen = PDFGenerator()
-    storage = MinioService()
-    current_date = datetime.now().strftime("%d.%m.%Y")
+    # 1. Настраиваем Jinja2 на чтение из папки app/templates
+    env = Environment(loader=FileSystemLoader("app/templates"))
+    template = env.get_template("safety_instruction.html")
     
-    # Генерируем PDF
-    pdf_bytes = await pdf_gen.create_safety_doc(
-        employee_name=data["employee_name"],
-        doc_id=data["doc_id"],
+    # 2. Рендерим HTML, подставляя наши данные
+    current_date = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    html_content = template.render(
+        audit_id=audit_id,
+        user_id=user_id,
+        doc_type=doc_type,
         date=current_date
     )
-    
-    doc_hash = hashlib.sha256(pdf_bytes).hexdigest()
-    file_name = f"safety/{current_date[-4:]}/{data['doc_id']}.pdf"
-    file_path = storage.upload_pdf(file_name, pdf_bytes)
-    
-    # Обновляем статус в базе данных
-    db = SessionLocal()
-    try:
-        # Ищем ту самую "заглушку" со статусом GENERATION_IN_PROGRESS
-        audit_record = db.query(AuditTrail).filter(AuditTrail.document_id == data["doc_id"]).first()
-        if audit_record:
-            audit_record.event_type = "DOCUMENT_SIGNED_PEP"
-            audit_record.document_hash = doc_hash
-            
-            # Обновляем JSON с метаданными
-            meta = dict(audit_record.metadata_info)
-            meta["minio_path"] = file_path
-            meta["status"] = "success"
-            audit_record.metadata_info = meta
-            
-            db.commit()
-            print(f"[{datetime.now()}] Успех! Документ {data['doc_id']} сохранен.")
-    finally:
-        db.close()
+
+    # 3. Отправляем готовый HTML в браузер
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
         
-    return {"document_hash": doc_hash, "minio_path": file_path}
+        await page.set_content(html_content)
+        # Отключаем печать фона, чтобы цвета блока подписи сохранились
+        pdf_bytes = await page.pdf(format="A4", print_background=True)
+        
+        await browser.close()
+        return pdf_bytes
 
-# 2. WORKFLOW (Оркестратор)
-# Он говорит Temporal, как именно запускать Activity (таймауты, ретраи)
-@workflow.defn
-class DocumentWorkflow:
-    @workflow.run
-    async def run(self, data: dict) -> dict:
-        return await workflow.execute_activity(
-            generate_document_activity,
-            data,
-            start_to_close_timeout=timedelta(seconds=60), # Ждем максимум минуту
-            retry_policy=RetryPolicy(maximum_attempts=3)  # Если Playwright упадет, пробуем еще 3 раза!
+@celery_app.task(name="app.worker.generate_document_task")
+def generate_document_task(audit_id: int, user_id: str, doc_type: str):
+    """Главная задача Celery"""
+    db: Session = SessionLocal()
+    
+    try:
+        # 1. Генерируем PDF (запускаем асинхронный Playwright внутри синхронного Celery)
+        pdf_bytes = asyncio.run(render_pdf_with_playwright(audit_id, user_id, doc_type))
+        
+        # 2. Вычисляем неизменяемый хэш документа (SHA-256)
+        file_hash = hashlib.sha256(pdf_bytes).hexdigest()
+        
+        # 3. Формируем путь для сохранения файла в MinIO
+        file_name = f"{audit_id}_{doc_type}_{user_id}.pdf"
+        file_path = f"{doc_type}/2026/{file_name}"
+        
+        # 4. Сохраняем физический файл в MinIO
+        minio_client = get_minio_client()
+        minio_client.put_object(
+            bucket_name=BUCKET_NAME,
+            object_name=file_path,
+            data=BytesIO(pdf_bytes),
+            length=len(pdf_bytes),
+            content_type="application/pdf"
         )
-
-# 3. ЗАПУСК ВОРКЕРА
-async def main():
-    # Берем адрес из переменных окружения (в докере это temporal:7233)
-    temporal_url = os.getenv("TEMPORAL_URL", "temporal:7233")
-    client = await Client.connect(temporal_url)
-    
-    worker = Worker(
-        client,
-        task_queue="document-generation-queue",
-        workflows=[DocumentWorkflow],
-        activities=[generate_document_activity],
-        workflow_runner=UnsandboxedWorkflowRunner(), # <-- ОТКЛЮЧАЕМ ПЕСОЧНИЦУ
-    )
-    
-    print("🚀 Temporal Worker успешно запущен и ждет задач...")
-    await worker.run()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        
+        # 5. Триумф! Обновляем статус в базе данных на "Успешно подписан"
+        audit_record = db.query(AuditTrail).filter(AuditTrail.id == audit_id).first()
+        if audit_record:
+            audit_record.status = "DOCUMENT_SIGNED_PEP"
+            audit_record.metadata_info = {
+                "minio_path": file_path,
+                "sha256_hash": file_hash,
+                "bucket": BUCKET_NAME
+            }
+            db.commit()
+            
+        return {"status": "success", "audit_id": audit_id, "hash": file_hash}
+        
+    except Exception as e:
+        # Если что-то упало (нет связи с MinIO и тд), записываем ошибку в БД
+        db.rollback()
+        audit_record = db.query(AuditTrail).filter(AuditTrail.id == audit_id).first()
+        if audit_record:
+            audit_record.status = "ERROR"
+            audit_record.metadata_info = {"error_message": str(e)}
+            db.commit()
+        raise e
+    finally:
+        db.close() # Обязательно закрываем сессию БД
