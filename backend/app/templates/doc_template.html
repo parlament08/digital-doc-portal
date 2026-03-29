@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Helvetica', sans-serif; color: #333; line-height: 1.6; padding: 40px; }
+        .header { border-bottom: 2px solid #2563eb; padding-bottom: 10px; margin-bottom: 30px; text-align: right; }
+        .company-name { font-size: 20px; font-weight: bold; color: #2563eb; }
+        .doc-title { text-align: center; font-size: 24px; text-transform: uppercase; margin-bottom: 40px; }
+        .content { min-height: 500px; }
+        
+        /* Штамп ПЭП */
+        .stamp {
+            margin-top: 50px;
+            border: 3px solid #2563eb;
+            color: #2563eb;
+            display: inline-block;
+            padding: 15px;
+            text-transform: uppercase;
+            font-weight: bold;
+            border-radius: 10px;
+            transform: rotate(-2deg);
+            background: rgba(37, 99, 235, 0.05);
+        }
+        .stamp-row { font-size: 12px; margin-bottom: 3px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="company-name">INTERNAL DOCUMENTATION SYSTEM</div>
+        <div style="font-size: 12px; color: #666;">ID: {{ audit_id }}</div>
+    </div>
+
+    <div class="doc-title">{{ title }}</div>
+
+    <div class="content">
+        {{ body_content | safe }}
+    </div>
+
+    <div class="stamp">
+        <div class="stamp-row">ДОКУМЕНТ ПОДПИСАН ПЭП</div>
+        <div class="stamp-row">ВЛАДЕЛЕЦ: {{ user_id }}</div>
+        <div class="stamp-row">ДАТА: {{ sign_date }}</div>
+        <div class="stamp-row">HASH: {{ doc_hash[:16] }}...</div>
+    </div>
+</body>
+</html>

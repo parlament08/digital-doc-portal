@@ -2,76 +2,92 @@ import asyncio
 import hashlib
 import os
 from io import BytesIO
-
 from datetime import datetime
-from jinja2 import Environment, FileSystemLoader
 
+from jinja2 import Environment, FileSystemLoader
 from minio import Minio
 from playwright.async_api import async_playwright
 from sqlalchemy.orm import Session
 
 from app.celery_app import celery_app
 from app.core.database import SessionLocal
-from app.models.audit import AuditTrail
+from app import models  # Важно: импортируем весь пакет моделей
 
-# Данные для доступа к MinIO (в идеале вынести в .env, но для MVP можно так)
+# Настройки MinIO
 MINIO_URL = os.environ.get("MINIO_URL", "minio:9000")
 MINIO_USER = os.environ.get("MINIO_ROOT_USER", "admin")
 MINIO_PASS = os.environ.get("MINIO_ROOT_PASSWORD", "password123")
 BUCKET_NAME = "signed-documents"
 
 def get_minio_client():
-    """Подключаемся к хранилищу MinIO"""
     client = Minio(MINIO_URL, access_key=MINIO_USER, secret_key=MINIO_PASS, secure=False)
     if not client.bucket_exists(BUCKET_NAME):
         client.make_bucket(BUCKET_NAME)
     return client
 
 async def render_pdf_with_playwright(audit_id: int, user_id: str, doc_type: str) -> bytes:
-    """Асинхронная генерация PDF через "безголовый" браузер Chromium и Jinja2"""
+    """Генерация PDF с динамическим выбором контента"""
     
-    # 1. Настраиваем Jinja2 на чтение из папки app/templates
-    env = Environment(loader=FileSystemLoader("app/templates"))
-    template = env.get_template("safety_instruction.html")
+    # Определяем путь к папке шаблонов относительно текущего файла
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    template_path = os.path.join(current_dir, "templates")
     
-    # 2. Рендерим HTML, подставляя наши данные
-    current_date = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    env = Environment(loader=FileSystemLoader(template_path))
+    
+    # Пытаемся найти специфичный шаблон или используем базовый корпоративный
+    template_name = f"{doc_type}.html"
+    if not os.path.exists(f"app/templates/{template_name}"):
+        template_name = "doc_template.html" # Наш универсальный шаблон со штампом
+    
+    template = env.get_template(template_name)
+    
+    # Справочник названий для заголовка внутри PDF
+    titles = {
+        "safety_instruction_2026": "ВВОДНЫЙ ИНСТРУКТАЖ ПО ТЕХНИКЕ БЕЗОПАСНОСТИ",
+        "nda_2026": "СОГЛАШЕНИЕ О НЕРАЗГЛАШЕНИИ (NDA)",
+        "remote_work_policy": "ПОЛИТИКА УДАЛЕННОЙ РАБОТЫ"
+    }
+
+    # 2. Данные для рендеринга (теперь со штампом)
+    current_date = datetime.now().strftime("%d.%m.%Y %H:%M")
     html_content = template.render(
+        title=titles.get(doc_type, "ОФИЦИАЛЬНЫЙ ДОКУМЕНТ"),
         audit_id=audit_id,
         user_id=user_id,
-        doc_type=doc_type,
-        date=current_date
+        sign_date=current_date,
+        doc_hash=hashlib.md5(str(audit_id).encode()).hexdigest()[:10] # Временный хэш для красоты
     )
 
-    # 3. Отправляем готовый HTML в браузер
+    # 3. Рендеринг через Playwright
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
         page = await browser.new_page()
-        
         await page.set_content(html_content)
-        # Отключаем печать фона, чтобы цвета блока подписи сохранились
-        pdf_bytes = await page.pdf(format="A4", print_background=True)
-        
+        # Ждем загрузки всех стилей
+        await page.wait_for_load_state("networkidle")
+        pdf_bytes = await page.pdf(
+            format="A4", 
+            print_background=True,
+            margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"}
+        )
         await browser.close()
         return pdf_bytes
 
-@celery_app.task(name="app.worker.generate_document_task")
+@celery_app.task
 def generate_document_task(audit_id: int, user_id: str, doc_type: str):
-    """Главная задача Celery"""
     db: Session = SessionLocal()
     
     try:
-        # 1. Генерируем PDF (запускаем асинхронный Playwright внутри синхронного Celery)
+        # 1. Генерация
         pdf_bytes = asyncio.run(render_pdf_with_playwright(audit_id, user_id, doc_type))
-        
-        # 2. Вычисляем неизменяемый хэш документа (SHA-256)
         file_hash = hashlib.sha256(pdf_bytes).hexdigest()
         
-        # 3. Формируем путь для сохранения файла в MinIO
+        # 2. Путь (организуем файлы по папкам-типам)
+        year = datetime.now().year
         file_name = f"{audit_id}_{doc_type}_{user_id}.pdf"
-        file_path = f"{doc_type}/2026/{file_name}"
+        file_path = f"{doc_type}/{year}/{file_name}"
         
-        # 4. Сохраняем физический файл в MinIO
+        # 3. MinIO
         minio_client = get_minio_client()
         minio_client.put_object(
             bucket_name=BUCKET_NAME,
@@ -81,27 +97,36 @@ def generate_document_task(audit_id: int, user_id: str, doc_type: str):
             content_type="application/pdf"
         )
         
-        # 5. Триумф! Обновляем статус в базе данных на "Успешно подписан"
-        audit_record = db.query(AuditTrail).filter(AuditTrail.id == audit_id).first()
+        # 4. Обновляем статус в AuditTrail
+        audit_record = db.query(models.AuditTrail).filter(models.AuditTrail.id == audit_id).first()
         if audit_record:
             audit_record.status = "DOCUMENT_SIGNED_PEP"
             audit_record.metadata_info = {
-                "minio_path": file_path,
+                "file_path": file_path, # Важно: ключ file_path используется в main.py для скачивания
                 "sha256_hash": file_hash,
                 "bucket": BUCKET_NAME
             }
             db.commit()
+
+        # 5. Опционально: Обновляем статус в AssignedDocument
+        assign_record = db.query(models.AssignedDocument).filter(
+            models.AssignedDocument.user_id == user_id,
+            models.AssignedDocument.document_type == doc_type
+        ).first()
+        if assign_record:
+            assign_record.status = "SIGNED"
+            db.commit()
             
-        return {"status": "success", "audit_id": audit_id, "hash": file_hash}
+        return {"status": "success", "file": file_path}
         
     except Exception as e:
-        # Если что-то упало (нет связи с MinIO и тд), записываем ошибку в БД
         db.rollback()
-        audit_record = db.query(AuditTrail).filter(AuditTrail.id == audit_id).first()
+        # Обновляем статус на ошибку, чтобы фронтенд перестал крутить лоадер
+        audit_record = db.query(models.AuditTrail).filter(models.AuditTrail.id == audit_id).first()
         if audit_record:
             audit_record.status = "ERROR"
-            audit_record.metadata_info = {"error_message": str(e)}
+            audit_record.metadata_info = {"error": str(e)}
             db.commit()
         raise e
     finally:
-        db.close() # Обязательно закрываем сессию БД
+        db.close()

@@ -35,7 +35,7 @@ services:
     restart: always
     command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
-      - ./backend:/app
+      - ./backend/app:/app/app
     ports:
       - "8000:8000"
     environment:
@@ -53,7 +53,7 @@ services:
     # Запускаем Celery-воркер, используя код из папки app
     command: celery -A app.celery_app worker --loglevel=info
     volumes:
-      - ./backend:/app
+      - ./backend/app:/app/app
     environment:
       - DATABASE_URL=postgresql://user:password@db:5432/doc_portal
     depends_on:
