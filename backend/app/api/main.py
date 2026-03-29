@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from minio import Minio
 from datetime import datetime
 from app.celery_app import celery_app
+from sqlalchemy import func
 
 # Импортируем нашу базу и ВСЕ модели через __init__.py
 from app.core.database import engine, get_db
@@ -162,3 +163,26 @@ def get_document_pdf(user_id: str, doc_id: str, db: Session = Depends(get_db)):
         return Response(content=pdf_bytes, media_type="application/pdf")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка MinIO: {str(e)}")
+    
+
+@app.get("/api/admin/stats")
+def get_admin_stats(db: Session = Depends(get_db)):
+    # 1. Считаем общее кол-во уникальных сотрудников, которым что-то назначено
+    total_employees = db.query(models.AssignedDocument.user_id).distinct().count()
+    
+    # 2. Считаем, сколько документов РЕАЛЬНО подписано (есть в аудите со статусом SUCCESS)
+    signed_count = db.query(models.AuditTrail).filter(
+        models.AuditTrail.status == "DOCUMENT_SIGNED_PEP"
+    ).count()
+    
+    # 3. Считаем, сколько документов еще ждут подписи
+    # (Всего назначений минус уже подписанные)
+    total_assignments = db.query(models.AssignedDocument).count()
+    pending_count = total_assignments - signed_count if total_assignments > signed_count else 0
+
+    return {
+        "total_employees": total_employees,
+        "signed_today": signed_count, # Для MVP считаем все подписанные
+        "awaiting_signature": pending_count
+    }
+

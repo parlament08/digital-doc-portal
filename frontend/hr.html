@@ -23,15 +23,15 @@
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                 <p class="text-sm text-gray-500 font-medium uppercase tracking-wider">Всего сотрудников</p>
-                <p class="text-4xl font-bold mt-2">124</p>
+                <p class="text-4xl font-bold mt-2">{{ stats.total_employees }}</p>
             </div>
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                 <p class="text-sm text-green-600 font-medium uppercase tracking-wider">Подписано сегодня</p>
-                <p class="text-4xl font-bold mt-2">12</p>
+                <p class="text-4xl font-bold mt-2">{{ stats.signed_today }}</p>
             </div>
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                 <p class="text-sm text-orange-600 font-medium uppercase tracking-wider">Ожидают подписи</p>
-                <p class="text-4xl font-bold mt-2">45</p>
+                <p class="text-4xl font-bold mt-2">{{ stats.awaiting_signature }}</p>
             </div>
         </div>
 
@@ -54,12 +54,14 @@
                         </td>
                         <td class="px-6 py-4 text-sm text-gray-600">{{ log.document_type }}</td>
                         <td class="px-6 py-4">
-                            <span v-if="log.status === 'DOCUMENT_SIGNED_PEP'" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                Подписано
-                            </span>
-                            <span v-else class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                В процессе
-                            </span>
+                          <span :class="{
+                              'px-2 py-1 text-xs font-medium rounded-full': true,
+                              'bg-green-100 text-green-800': log.status === 'DOCUMENT_SIGNED_PEP',
+                              'bg-blue-100 text-blue-800': log.status === 'GENERATION_IN_PROGRESS',
+                              'bg-red-100 text-red-800': log.status === 'ERROR'
+                          }">
+                              {{ log.status }}
+                          </span>
                         </td>
                         <td class="px-6 py-4 text-sm text-gray-500">{{ formatDate(log.created_at) }}</td>
                         <td class="px-6 py-4 text-right">
@@ -77,8 +79,8 @@
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Выберите сотрудника</label>
                         <select v-model="selectedUser" class="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none">
-                            <option>emp_001_andrey</option>
-                            <option>emp_002_yury</option>
+                            <option value="emp_001_andrey">emp_001_andrey</option>
+                            <option value="emp_002_yury">emp_002_yury</option>
                         </select>
                     </div>
                     <div>
@@ -106,13 +108,26 @@
                 const showModal = ref(false)
                 const selectedUser = ref('emp_001_andrey')
                 const selectedTemplate = ref('safety_instruction_2026')
+                
+                // 1. Наша переменная статистики
+                const stats = ref({ total_employees: 0, signed_today: 0, awaiting_signature: 0 });
 
                 const fetchLogs = async () => {
-                    // Используем наш старый роут, который возвращает ВЕСЬ список из AuditTrail
                     const response = await fetch('http://localhost:8000/api/documents/all');
                     if (response.ok) {
                         auditLogs.value = await response.json();
                     }
+                }
+
+                const fetchStats = async () => {
+                  try {
+                      const response = await fetch('http://localhost:8000/api/admin/stats');
+                      if (response.ok) {
+                          stats.value = await response.json();
+                      }
+                  } catch (e) {
+                      console.error("Ошибка загрузки статистики:", e);
+                  }
                 }
 
                 const formatDate = (dateStr) => {
@@ -121,7 +136,6 @@
                 }
 
                 const viewPdf = (log) => {
-                    // Открываем PDF в новой вкладке
                     window.open(`http://localhost:8000/api/documents/${log.user_id}/${log.document_type}/pdf`, '_blank');
                 }
 
@@ -138,8 +152,9 @@
 
                       if (response.ok) {
                           showModal.value = false;
-                          // Сразу обновляем таблицу, чтобы увидеть новую задачу
+                          // Обновляем логи и статистику сразу после назначения
                           await fetchLogs(); 
+                          await fetchStats(); 
                           alert('Документ успешно назначен!');
                       } else {
                           const err = await response.json();
@@ -151,9 +166,22 @@
                   }
                 }
 
-                onMounted(fetchLogs)
+                onMounted(() => {
+                  fetchLogs();
+                  fetchStats();
+                });
 
-                return { auditLogs, showModal, formatDate, viewPdf, assignDoc, selectedUser, selectedTemplate }
+                // 2. Обязательно добавляем stats в return!
+                return { 
+                    auditLogs, 
+                    showModal, 
+                    formatDate, 
+                    viewPdf, 
+                    assignDoc, 
+                    selectedUser, 
+                    selectedTemplate,
+                    stats 
+                }
             }
         }).mount('#app')
     </script>
