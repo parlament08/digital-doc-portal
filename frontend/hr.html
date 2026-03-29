@@ -5,6 +5,7 @@
     <title>Панель HR | Digital Doc Portal</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
 <body class="bg-gray-50 text-gray-800 font-sans min-h-screen">
     <div id="app" class="p-8 max-w-7xl mx-auto">
@@ -140,30 +141,42 @@
                 }
 
                 const assignDoc = async () => {
-                  try {
-                      const response = await fetch('http://localhost:8000/api/admin/assign', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                              user_id: selectedUser.value,
-                              document_type: selectedTemplate.value
-                          })
-                      });
+                    try {
+                        // 1. Отправляем запрос на бэкенд
+                        const response = await fetch('http://localhost:8000/api/admin/assign', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                user_id: selectedUser.value,
+                                document_type: selectedTemplate.value
+                            })
+                        });
 
-                      if (response.ok) {
-                          showModal.value = false;
-                          // Обновляем логи и статистику сразу после назначения
-                          await fetchLogs(); 
-                          await fetchStats(); 
-                          alert('Документ успешно назначен!');
-                      } else {
-                          const err = await response.json();
-                          alert('Ошибка: ' + err.detail);
-                      }
-                  } catch (error) {
-                      console.error('Ошибка при назначении:', error);
-                      alert('Не удалось связаться с сервером');
-                  }
+                        if (response.ok) {
+                            // 2. Сначала обновляем данные в фоне
+                            // Используем Promise.all, чтобы обе функции выполнились параллельно и быстро
+                            await Promise.all([fetchLogs(), fetchStats()]);
+
+                            // 3. Закрываем модальное окно назначения
+                            showModal.value = false;
+
+                            // 4. Показываем красивый попап (SweetAlert2)
+                            Swal.fire({
+                                title: 'Успешно!',
+                                text: 'Документ назначен и появится в кабинете сотрудника',
+                                icon: 'success',
+                                confirmButtonColor: '#2563eb',
+                                timer: 2000,
+                                timerProgressBar: true
+                            });
+                        } else {
+                            const err = await response.json();
+                            Swal.fire('Ошибка', err.detail || 'Не удалось назначить документ', 'error');
+                        }
+                    } catch (error) {
+                        console.error('Ошибка при назначении:', error);
+                        Swal.fire('Ошибка сети', 'Сервер недоступен', 'error');
+                    }
                 }
 
                 onMounted(() => {
