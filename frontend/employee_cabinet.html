@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Мои Документы | Digital Doc Portal</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans h-screen overflow-hidden">
+    <div id="app" class="flex h-full relative">
+        
+        <aside class="w-[350px] min-w-[350px] bg-white border-r border-gray-200 flex flex-col z-10">
+            <div class="p-6 border-b border-gray-200 bg-gray-50">
+                <h1 class="text-xl font-bold text-gray-900 tracking-tight">Кабинет сотрудника</h1>
+                <div class="mt-4">
+                    <label class="text-xs text-gray-500 font-medium uppercase tracking-wider">Текущий пользователь:</label>
+                    <select v-model="currentUser" @change="fetchDocuments" class="w-full mt-1 border border-gray-300 rounded-lg p-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none font-medium text-blue-700">
+                        <option value="emp_001">Andrey (emp_001)</option>
+                        <option value="emp_002">Yury (emp_002)</option>
+                        <option value="emp_003">Anna (emp_003)</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-4 space-y-3">
+                <div v-if="documents.length === 0" class="text-center text-gray-400 py-10">
+                    Нет документов для отображения.
+                </div>
+                
+                <div v-for="doc in documents" :key="doc.id"
+                     @click="selectDocument(doc)"
+                     :class="['p-4 rounded-xl border cursor-pointer transition-all duration-200',
+                              selectedDoc?.id === doc.id ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50']">
+                    
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="font-medium text-gray-900 leading-tight">{{ doc.document_type.toUpperCase() }}</h3>
+                            <p class="text-xs text-gray-500 mt-1">Документ #{{ doc.id }}</p>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <span v-if="doc.status === 'FULLY_SIGNED'" class="inline-flex items-center gap-1.5 bg-green-100 text-green-700 text-xs px-2.5 py-1 rounded-md font-medium">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+                            Подписано (MSign)
+                        </span>
+                        <span v-else-if="doc.status === 'WAITING_EMPLOYEE'" class="inline-flex items-center gap-1.5 bg-yellow-100 text-yellow-800 text-xs px-2.5 py-1 rounded-md font-medium">
+                            <span class="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse"></span>
+                            Требует подписи
+                        </span>
+                        <span v-else class="inline-flex bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-md font-medium">
+                            {{ doc.status }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <main class="flex-1 bg-gray-100 flex flex-col relative">
+            
+            <div v-if="selectedDoc" class="flex-1 flex flex-col h-full">
+                <div class="bg-white border-b border-gray-200 p-6 flex justify-between items-center shadow-sm z-10">
+                    <h2 class="text-xl font-semibold text-gray-800">Просмотр: {{ selectedDoc.document_type.toUpperCase() }}</h2>
+                    <span class="text-sm bg-gray-100 px-3 py-1 rounded-full text-gray-600 border border-gray-200">ID: {{ selectedDoc.id }}</span>
+                </div>
+
+                <div class="flex-1 p-8 overflow-y-auto flex justify-center items-start bg-gray-200">
+                    <div class="bg-white w-full max-w-4xl min-h-[800px] shadow-lg border border-gray-300 rounded-lg p-12 flex flex-col">
+                        
+                        <div class="border-b-2 border-gray-800 pb-4 mb-8 text-center">
+                            <h1 class="text-2xl font-bold uppercase tracking-widest">{{ selectedDoc.document_type.replace('_', ' ') }}</h1>
+                            <p class="text-gray-500 mt-2">Документ сгенерирован системой КЭДО</p>
+                        </div>
+                        
+                        <div class="prose max-w-none flex-1 text-gray-700 leading-relaxed">
+                            <p>Настоящий документ подтверждает согласие сотрудника <strong>{{ selectedDoc.user_id }}</strong> с условиями кампании #{{ selectedDoc.metadata_info?.campaign_id }}.</p>
+                            <p class="mt-4">Документ подписан со стороны работодателя.</p>
+                            
+                            <div class="mt-12 p-6 bg-gray-50 border border-gray-200 rounded-lg text-sm">
+                                <h4 class="font-bold text-gray-900 mb-2">Блок подписей:</h4>
+                                <div class="flex justify-between mt-4">
+                                    <div>
+                                        <p class="text-gray-500">Работодатель (HR Директор):</p>
+                                        <p class="font-mono text-xs mt-1 text-blue-600">[УКЭП Действительна]</p>
+                                    </div>
+                                    <div class="text-right">
+                                        <p class="text-gray-500">Сотрудник (Вы):</p>
+                                        <p v-if="selectedDoc.status === 'FULLY_SIGNED'" class="font-mono text-xs mt-1 text-green-600">[ПЭП/MSign Успешно]</p>
+                                        <p v-else class="font-mono text-xs mt-1 text-red-500">[ОЖИДАЕТ ПОДПИСИ]</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <div class="bg-white border-t border-gray-200 p-6 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)] flex justify-end items-center z-10">
+                    
+                    <div v-if="selectedDoc.status === 'FULLY_SIGNED'" class="flex items-center text-green-700 font-medium bg-green-50 px-6 py-3 rounded-lg border border-green-200">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        Документ имеет юридическую силу
+                    </div>
+                    
+                    <button v-else-if="selectedDoc.status === 'WAITING_EMPLOYEE'"
+                            @click="showPinModal = true"
+                            class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-8 rounded-lg transition-all shadow-md hover:shadow-lg flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                        Подписать документ (MSign)
+                    </button>
+                    
+                    <div v-else class="text-gray-400 text-sm">
+                        Документ находится в статусе: {{ selectedDoc.status }}
+                    </div>
+
+                </div>
+            </div>
+
+            <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400">
+                <svg class="w-24 h-24 mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                <p class="text-xl font-medium text-gray-500">Выберите документ слева</p>
+            </div>
+        </main>
+
+        <div v-if="showPinModal" class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-50">
+            <div class="bg-white rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center relative overflow-hidden">
+                <div class="absolute top-0 left-0 w-full h-2 bg-blue-500"></div>
+                
+                <h3 class="text-2xl font-bold text-gray-900 mb-1">MSign</h3>
+                <p class="text-sm text-gray-500 mb-6">Подтверждение мобильной подписи</p>
+                
+                <p class="text-gray-700 font-medium mb-4">Введите 4-значный PIN-код:</p>
+                
+                <div class="flex justify-center gap-3 mb-8">
+                    <input type="password" maxlength="1" v-model="pin1" ref="pin1Ref" @input="focusNext($event, 'pin2Ref')" class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none">
+                    <input type="password" maxlength="1" v-model="pin2" ref="pin2Ref" @input="focusNext($event, 'pin3Ref')" class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none">
+                    <input type="password" maxlength="1" v-model="pin3" ref="pin3Ref" @input="focusNext($event, 'pin4Ref')" class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none">
+                    <input type="password" maxlength="1" v-model="pin4" ref="pin4Ref" class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none">
+                </div>
+                
+                <div class="flex gap-3">
+                    <button @click="closePinModal" class="flex-1 py-3 text-gray-600 bg-gray-100 rounded-xl font-medium hover:bg-gray-200 transition-colors">Отмена</button>
+                    <button @click="executeSign" :disabled="!isPinValid || isSigning" class="flex-1 py-3 text-white bg-blue-600 rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center">
+                        <span v-if="isSigning" class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                        <span v-else>Подтвердить</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted, computed } = Vue
+
+        createApp({
+            setup() {
+                const currentUser = ref('emp_001') // По умолчанию
+                const documents = ref([]) 
+                const selectedDoc = ref(null)
+                
+                // State для модалки MSign
+                const showPinModal = ref(false)
+                const isSigning = ref(false)
+                const pin1 = ref('')
+                const pin2 = ref('')
+                const pin3 = ref('')
+                const pin4 = ref('')
+
+                // Проверка, введены ли все 4 цифры
+                const isPinValid = computed(() => {
+                    return pin1.value && pin2.value && pin3.value && pin4.value
+                })
+
+                // Фокус на следующий инпут при вводе пин-кода
+                const focusNext = (event, nextRefName) => {
+                    if (event.target.value.length === 1) {
+                        // Небольшой хак для доступа к refs во Vue 3 Composition API без явного объявления каждого
+                        const nextEl = document.querySelector(`input[v-model="${nextRefName.replace('Ref', '')}"]`);
+                        if(nextEl) nextEl.focus();
+                    }
+                }
+
+                // Закрытие модалки с очисткой
+                const closePinModal = () => {
+                    showPinModal.value = false;
+                    pin1.value = pin2.value = pin3.value = pin4.value = '';
+                }
+
+                // Загрузка документов конкретного пользователя
+                const fetchDocuments = async () => {
+                    try {
+                        const response = await fetch('http://localhost:8000/api/documents/all');
+                        if (response.ok) {
+                            const allLogs = await response.json();
+                            
+                            // 1. Оставляем логи только текущего сотрудника
+                            const userLogs = allLogs.filter(d => d.user_id === currentUser.value);
+                            
+                            // 2. Группируем логи по campaign_id, оставляя ТОЛЬКО самый свежий
+                            const latestDocsMap = new Map();
+                            
+                            userLogs.forEach(log => {
+                                const campaignId = log.metadata_info?.campaign_id;
+                                if (campaignId) {
+                                    // Если документа еще нет в Map, ИЛИ текущий лог новее (id больше)
+                                    if (!latestDocsMap.has(campaignId) || latestDocsMap.get(campaignId).id < log.id) {
+                                        latestDocsMap.set(campaignId, log);
+                                    }
+                                }
+                            });
+
+                            // 3. Превращаем Map обратно в массив и оставляем нужные статусы
+                            documents.value = Array.from(latestDocsMap.values()).filter(d => 
+                                d.status === 'WAITING_EMPLOYEE' || d.status === 'FULLY_SIGNED'
+                            );
+                            
+                            // 4. Сортируем: свежие сверху
+                            documents.value.sort((a, b) => b.id - a.id);
+                            
+                            // 5. Если документ был открыт, обновляем его статус на экране (чтобы пропала кнопка и появилась зеленка)
+                            if (selectedDoc.value) {
+                                const currentCampaignId = selectedDoc.value.metadata_info?.campaign_id;
+                                const updatedDoc = documents.value.find(d => d.metadata_info?.campaign_id === currentCampaignId);
+                                
+                                if (updatedDoc) {
+                                    selectedDoc.value = updatedDoc;
+                                } else {
+                                    selectedDoc.value = null; // Если документ пропал из списка
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Ошибка загрузки документов:', error);
+                        Swal.fire('Ошибка', 'Не удалось загрузить список документов', 'error');
+                    }
+                }
+
+                onMounted(() => {
+                    fetchDocuments()
+                })
+
+                const selectDocument = (doc) => {
+                    selectedDoc.value = doc
+                }
+
+                // Финальный вызов API для подписи
+                const executeSign = async () => {
+                    if (!selectedDoc.value) return;
+                    isSigning.value = true;
+                    
+                    try {
+                        // Дергаем наш новый эндпоинт
+                        const response = await fetch(`http://localhost:8000/api/documents/${selectedDoc.value.id}/employee-sign`, {
+                            method: 'POST'
+                        });
+
+                        if (response.ok) {
+                            closePinModal();
+                            
+                            Swal.fire({
+                                title: 'Успешно!',
+                                text: 'Документ подписан вашей электронной подписью.',
+                                icon: 'success',
+                                confirmButtonColor: '#2563eb',
+                                timer: 2000
+                            });
+
+                            // Обновляем список, чтобы статус сменился на FULLY_SIGNED
+                            await fetchDocuments();
+                            
+                            // Обновляем выбранный документ
+                            selectedDoc.value = documents.value.find(d => d.id === selectedDoc.value.id);
+                            
+                        } else {
+                            const data = await response.json();
+                            Swal.fire('Ошибка подписи', data.detail || 'Отклонено сервером', 'error');
+                        }
+                    } catch (error) {
+                        console.error('Ошибка:', error);
+                        Swal.fire('Ошибка сети', 'Сервер недоступен', 'error');
+                    } finally {
+                        isSigning.value = false;
+                        closePinModal();
+                    }
+                }
+
+                return {
+                    currentUser, documents, selectedDoc, 
+                    showPinModal, isSigning, pin1, pin2, pin3, pin4, isPinValid,
+                    selectDocument, fetchDocuments, closePinModal, focusNext, executeSign
+                }
+            }
+        }).mount('#app')
+    </script>
+</body>
+</html>
