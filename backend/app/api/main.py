@@ -6,11 +6,14 @@ from minio import Minio
 from datetime import datetime
 from app.celery_app import celery_app
 from sqlalchemy import func
+from typing import List
+import hashlib
+from io import BytesIO
 
 # Импортируем нашу базу и ВСЕ модели через __init__.py
 from app.core.database import engine, get_db
 from app import models 
-from app.worker import generate_document_task
+
 
 # Автоматическое создание всех таблиц (AuditTrail и AssignedDocument)
 models.Base.metadata.create_all(bind=engine)
@@ -35,15 +38,21 @@ class AssignRequest(BaseModel):
     user_id: str
     document_type: str
 
+class CampaignCreateRequest(BaseModel):
+    title: str
+    document_type: str
+    hr_director_id: str
+    employee_ids: List[str]
+
 # --- РОУТЫ ДЛЯ СОТРУДНИКА ---
 
 @app.get("/api/documents/{user_id}/list")
 def get_user_documents(user_id: str, db: Session = Depends(get_db)):
-    """Показывает сотруднику только те документы, которые ему назначил HR"""
-    
-    # 1. Получаем список всех назначений для юзера
+    """Показывает сотруднику документы, только если HR-Директор их УЖЕ подписал пакетно"""
+        
     assignments = db.query(models.AssignedDocument).filter(
-        models.AssignedDocument.user_id == user_id
+        models.AssignedDocument.user_id == user_id,
+        models.AssignedDocument.status == models.DocStatus.WAITING_EMPLOYEE # Фильтр по статусу!
     ).all()
     
     # Справочник названий (в будущем будет в отдельной таблице БД)
@@ -85,10 +94,11 @@ def sign_document(request: SignRequest, db: Session = Depends(get_db)):
     db.refresh(audit_record)
 
     # 2. Отправляем задачу воркеру ПО ИМЕНИ (как в декораторе воркера)
-    celery_app.send_task(
-        "app.worker.generate_document_task", 
-        args=[audit_record.id, request.user_id, request.document_type]
-    )
+    for doc in new_docs:
+        celery_app.send_task(
+            "app.worker.generate_document_task", 
+            args=[doc.id, doc.user_id, request.document_type]
+        )
 
     # generate_document_task.delay(
     #     audit_id=audit_record.id, 
@@ -126,6 +136,54 @@ def assign_document(request: AssignRequest, db: Session = Depends(get_db)):
     db.add(new_assign)
     db.commit()
     return {"message": f"Документ {request.document_type} назначен пользователю {request.user_id}"}
+
+@app.post("/api/admin/campaigns/create")
+def create_campaign(request: CampaignCreateRequest, db: Session = Depends(get_db)):
+    """
+    1. Создается кампания.
+    2. Создаются документы (получаем их ID).
+    3. Запускается Celery с корректными doc_id.
+    """
+    try:
+        # 1. Создаем родительскую кампанию
+        new_campaign = models.DocumentCampaign(
+            title=request.title,
+            document_type=request.document_type,
+            created_by_hr_id="hr_specialist_1", 
+            hr_director_id=request.hr_director_id,
+            status=models.CampaignStatus.GENERATING_PDFS
+        )
+        db.add(new_campaign)
+        db.flush() # Получаем ID кампании без полного коммита
+
+        # 2. Создаем документы по одному, чтобы получить их ID для Celery
+        for emp_id in request.employee_ids:
+            new_doc = models.AssignedDocument(
+                campaign_id=new_campaign.id,
+                user_id=emp_id,
+                status=models.DocStatus.DRAFT
+            )
+            db.add(new_doc)
+            db.flush() # <--- КРИТИЧНО: база присваивает ID объекту new_doc
+
+            # 3. Теперь doc.id точно существует (не None), отправляем в Celery
+            celery_app.send_task(
+                "app.worker.generate_document_task", 
+                args=[new_doc.id, new_doc.user_id, request.document_type]
+            )
+
+        # 4. Только теперь делаем финальный коммит всех записей
+        db.commit()
+
+        return {
+            "status": "success", 
+            "campaign_id": new_campaign.id, 
+            "count": len(request.employee_ids)
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Ошибка при создании кампании: {str(e)}")
 
 # --- РАБОТА С PDF (MinIO) ---
 
@@ -184,5 +242,51 @@ def get_admin_stats(db: Session = Depends(get_db)):
         "total_employees": total_employees,
         "signed_today": signed_count, # Для MVP считаем все подписанные
         "awaiting_signature": pending_count
+    }
+
+
+@app.get("/api/admin/campaigns/{campaign_id}/prepare-signature")
+def prepare_campaign_signature(campaign_id: int, db: Session = Depends(get_db)):
+    """
+    Собирает все документы кампании для подписи HR-директора.
+    Возвращает список хешей и путей к файлам.
+    """
+    # 1. Берем все документы этой кампании, где PDF уже сгенерирован
+    docs = db.query(models.AssignedDocument).filter(
+        models.AssignedDocument.campaign_id == campaign_id,
+        models.AssignedDocument.original_pdf_path != None
+    ).all()
+
+    if not docs:
+        raise HTTPException(status_code=404, detail="Нет готовых PDF для этой кампании")
+
+    documents_to_sign = []
+    
+    for doc in docs:
+        try:
+            # Получаем файл из MinIO для проверки и хеширования
+            response = minio_client.get_object("signed-documents", doc.original_pdf_path)
+            content = response.read()
+            response.close()
+            response.release_conn()
+
+            # Вычисляем SHA-256 хеш (именно его ждет MSign)
+            file_hash = hashlib.sha256(content).hexdigest()
+
+            documents_to_sign.append({
+                "doc_id": doc.id,
+                "user_id": doc.user_id,
+                "file_path": doc.original_pdf_path,
+                "hash": file_hash,
+                "title": f"Документ для {doc.user_id}"
+            })
+        except Exception as e:
+            # Если файл потерялся в MinIO, помечаем ошибку
+            continue
+
+    return {
+        "campaign_id": campaign_id,
+        "count": len(documents_to_sign),
+        "documents": documents_to_sign
     }
 

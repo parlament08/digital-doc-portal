@@ -95,22 +95,29 @@ async def render_pdf_with_playwright(audit_id: int, user_id: str, doc_type: str)
         await browser.close()
         return pdf_bytes
 
-@celery_app.task
-def generate_document_task(audit_id: int, user_id: str, doc_type: str):
+@celery_app.task(name="app.worker.generate_document_task")
+def generate_document_task(doc_id: int, user_id: str, doc_type: str):
     db: Session = SessionLocal()
+    minio_client = get_minio_client()
     
     try:
-        # 1. Генерация
-        pdf_bytes = asyncio.run(render_pdf_with_playwright(audit_id, user_id, doc_type))
+        # 1. Ищем документ в новой таблице
+        doc_record = db.query(models.AssignedDocument).filter(models.AssignedDocument.id == doc_id).first()
+        if not doc_record:
+            return {"status": "error", "message": "Record not found"}
+
+        # 2. Генерация PDF (Playwright)
+        # Передаем doc_id вместо audit_id
+        pdf_bytes = asyncio.run(render_pdf_with_playwright(doc_id, user_id, doc_type))
         file_hash = hashlib.sha256(pdf_bytes).hexdigest()
         
-        # 2. Путь (организуем файлы по папкам-типам)
-        year = datetime.now().year
-        file_name = f"{audit_id}_{doc_type}_{user_id}.pdf"
-        file_path = f"{doc_type}/{year}/{file_name}"
+        # 3. Путь: организуем по кампаниям (campaigns/ID/original/file.pdf)
+        # Это упростит пакетную выгрузку для MSign
+        campaign_id = doc_record.campaign_id
+        file_name = f"{user_id}_{doc_type}.pdf"
+        file_path = f"campaigns/{campaign_id}/original/{file_name}"
         
-        # 3. MinIO
-        minio_client = get_minio_client()
+        # 4. Загрузка в MinIO
         minio_client.put_object(
             bucket_name=BUCKET_NAME,
             object_name=file_path,
@@ -119,35 +126,33 @@ def generate_document_task(audit_id: int, user_id: str, doc_type: str):
             content_type="application/pdf"
         )
         
-        # 4. Обновляем статус в AuditTrail
-        audit_record = db.query(models.AuditTrail).filter(models.AuditTrail.id == audit_id).first()
-        if audit_record:
-            audit_record.status = "DOCUMENT_SIGNED_PEP"
-            audit_record.metadata_info = {
-                "file_path": file_path, # Важно: ключ file_path используется в main.py для скачивания
+        # 5. Обновляем статус и метаданные в AssignedDocument
+        doc_record.original_pdf_path = file_path
+        doc_record.status = models.DocStatus.DRAFT  # Остается DRAFT до подписи директора
+        doc_record.updated_at = datetime.now()
+        
+        # Опционально: создаем запись в AuditTrail, что PDF готов (для истории)
+        audit_log = models.AuditTrail(
+            user_id=user_id,
+            document_type=doc_type,
+            status="PDF_GENERATED",
+            metadata_info={
+                "file_path": file_path,
                 "sha256_hash": file_hash,
-                "bucket": BUCKET_NAME
+                "campaign_id": campaign_id
             }
-            db.commit()
-
-        # 5. Опционально: Обновляем статус в AssignedDocument
-        assign_record = db.query(models.AssignedDocument).filter(
-            models.AssignedDocument.user_id == user_id,
-            models.AssignedDocument.document_type == doc_type
-        ).first()
-        if assign_record:
-            assign_record.status = "SIGNED"
-            db.commit()
-            
-        return {"status": "success", "file": file_path}
+        )
+        db.add(audit_log)
+        
+        db.commit()
+        return {"status": "success", "file": file_path, "doc_id": doc_id}
         
     except Exception as e:
         db.rollback()
-        # Обновляем статус на ошибку, чтобы фронтенд перестал крутить лоадер
-        audit_record = db.query(models.AuditTrail).filter(models.AuditTrail.id == audit_id).first()
-        if audit_record:
-            audit_record.status = "ERROR"
-            audit_record.metadata_info = {"error": str(e)}
+        # Если упало, помечаем документ как ошибочный
+        doc_record = db.query(models.AssignedDocument).filter(models.AssignedDocument.id == doc_id).first()
+        if doc_record:
+            doc_record.status = models.DocStatus.ERROR
             db.commit()
         raise e
     finally:
