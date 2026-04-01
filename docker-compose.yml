@@ -65,6 +65,14 @@ services:
       backend:
         condition: service_started
 
+  mailpit:
+    image: axllent/mailpit
+    container_name: doc_portal_mailpit
+    ports:
+      - "8025:8025" # Веб-интерфейс (открой в браузере)
+      - "1025:1025" # SMTP сервер для приложения
+    restart: always      
+
 volumes:
   postgres_data:
   minio_data:

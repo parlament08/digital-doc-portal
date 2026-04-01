@@ -8,6 +8,7 @@ from jinja2 import Environment, FileSystemLoader
 from minio import Minio
 from playwright.async_api import async_playwright
 from sqlalchemy.orm import Session
+from minio.error import S3Error
 
 from app.celery_app import celery_app
 from app.core.database import SessionLocal
@@ -21,8 +22,13 @@ BUCKET_NAME = "signed-documents"
 
 def get_minio_client():
     client = Minio(MINIO_URL, access_key=MINIO_USER, secret_key=MINIO_PASS, secure=False)
-    if not client.bucket_exists(BUCKET_NAME):
-        client.make_bucket(BUCKET_NAME)
+    try:
+        if not client.bucket_exists(BUCKET_NAME):
+            client.make_bucket(BUCKET_NAME)
+    except S3Error as e:
+        # Если бакет уже создан другим воркером — это не ошибка, идем дальше
+        if e.code != "BucketAlreadyOwnedByYou":
+            raise e
     return client
 
 async def render_pdf_with_playwright(audit_id: int, user_id: str, doc_type: str) -> bytes:

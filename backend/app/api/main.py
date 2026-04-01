@@ -1,3 +1,5 @@
+from urllib import request
+
 from fastapi import FastAPI, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -67,14 +69,14 @@ def get_user_documents(user_id: str, db: Session = Depends(get_db)):
         # 2. Для каждого назначения ищем самую свежую запись о подписании
         record = db.query(models.AuditTrail).filter(
             models.AuditTrail.user_id == user_id,
-            models.AuditTrail.document_type == assign.document_type
+            models.AuditTrail.document_type == assign.campaign.document_type
         ).order_by(models.AuditTrail.id.desc()).first()
 
         status = record.status if record else assign.status
         
         result.append({
-            "id": assign.document_type,
-            "title": titles.get(assign.document_type, "Документ без названия"),
+            "id": assign.campaign.document_type,
+            "title": titles.get(assign.campaign.document_type, "Документ без названия"),
             "date": assign.created_at.strftime("%d.%m.%Y"),
             "status": status
         })
@@ -164,16 +166,16 @@ def create_campaign(request: CampaignCreateRequest, db: Session = Depends(get_db
                 status=models.DocStatus.DRAFT
             )
             db.add(new_doc)
-            db.flush() # <--- КРИТИЧНО: база присваивает ID объекту new_doc
+            db.commit() # <--- ТЕПЕРЬ ТУТ! Запись зафиксирована.
+            db.refresh(new_doc) # Получаем актуальный ID
 
-            # 3. Теперь doc.id точно существует (не None), отправляем в Celery
             celery_app.send_task(
                 "app.worker.generate_document_task", 
                 args=[new_doc.id, new_doc.user_id, request.document_type]
             )
 
         # 4. Только теперь делаем финальный коммит всех записей
-        db.commit()
+        # db.commit()
 
         return {
             "status": "success", 
@@ -288,5 +290,89 @@ def prepare_campaign_signature(campaign_id: int, db: Session = Depends(get_db)):
         "campaign_id": campaign_id,
         "count": len(documents_to_sign),
         "documents": documents_to_sign
+    }
+
+# --- НОВЫЕ ЭНДПОИНТЫ ДЛЯ MSIGN MOCK И WORKFLOW ---
+
+@app.post("/api/admin/campaigns/{campaign_id}/sign-by-hr")
+def sign_campaign_by_hr(campaign_id: int, db: Session = Depends(get_db)):
+    """
+    Имитация подписи HR-директора через MSign.
+    После этого шага документы становятся видимы сотрудникам.
+    """
+    campaign = db.query(models.DocumentCampaign).filter(models.DocumentCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Кампания не найдена")
+
+    # 1. Имитируем запрос к MSign (Заглушка)
+    # В реальности здесь был бы запрос к внешнему API
+    msign_mock_response = {
+        "status": "SUCCESS",
+        "signature_id": f"sig_hr_{campaign_id}_{datetime.now().timestamp()}",
+        "signed_at": datetime.now().isoformat()
+    }
+
+    # 2. Обновляем статус кампании
+    campaign.status = models.CampaignStatus.WAITING_EMPLOYEES
+    
+    # 3. Самое важное: переводим все документы из DRAFT в WAITING_EMPLOYEE
+    # Теперь сотрудники увидят их в своих личных кабинетах (/api/documents/{user_id}/list)
+    db.query(models.AssignedDocument).filter(
+        models.AssignedDocument.campaign_id == campaign_id
+    ).update({"status": models.DocStatus.WAITING_EMPLOYEE})
+
+    db.commit()
+
+    return {
+        "message": f"Кампания {campaign_id} успешно подписана HR-директором",
+        "msign_data": msign_mock_response
+    }
+
+
+@app.post("/api/documents/{doc_id}/employee-sign")
+def employee_sign_document(doc_id: int, db: Session = Depends(get_db)):
+    """
+    Имитация подписи конкретного документа сотрудником.
+    """
+    doc = db.query(models.AssignedDocument).filter(models.AssignedDocument.id == doc_id).first()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Документ не найден")
+    
+    if doc.status != models.DocStatus.WAITING_EMPLOYEE:
+        raise HTTPException(status_code=400, detail="Документ не готов к подписи сотрудником")
+
+    # 1. Имитируем подпись (MSign Mock)
+    doc.status = models.DocStatus.SIGNED
+    
+    # 2. Логируем в AuditTrail (чтобы HR видел историю)
+    new_log = models.AuditTrail(
+        user_id=doc.user_id,
+        document_type="safety_instruction_2026", # В будущем брать из кампании
+        status="DOCUMENT_SIGNED_PEP",
+        metadata_info={"signed_at": datetime.now().isoformat(), "doc_id": doc_id}
+    )
+    db.add(new_log)
+    db.commit()
+
+    return {"status": "success", "message": f"Документ {doc_id} подписан сотрудником"}
+
+
+@app.post("/api/admin/campaigns/{campaign_id}/send-notifications")
+def send_campaign_notifications(campaign_id: int, db: Session = Depends(get_db)):
+    """
+    Рассылка уведомлений сотрудникам через Celery.
+    Письма полетят в Mailpit.
+    """
+    docs = db.query(models.AssignedDocument).filter(
+        models.AssignedDocument.campaign_id == campaign_id,
+        models.AssignedDocument.status == models.DocStatus.WAITING_EMPLOYEE
+    ).all()
+
+    # В будущем здесь будет вызов Celery задачи:
+    # celery_app.send_task("app.worker.send_email_task", args=[...])
+    
+    return {
+        "message": f"Запущена рассылка {len(docs)} уведомлений. Проверьте Mailpit (порт 8025)"
     }
 
