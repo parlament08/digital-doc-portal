@@ -48,7 +48,7 @@
                 </div>
 
                 <div class="w-full md:w-auto flex flex-col sm:flex-row gap-3">
-                    <button @click="signAndSend(campaign.id)" :disabled="processingId === campaign.id" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 min-w-[200px]">
+                    <button @click="initiateSign(campaign.id)" :disabled="processingId === campaign.id" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 min-w-[200px]">
                         <span v-if="processingId === campaign.id" class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
                         <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
                         {{ processingId === campaign.id ? 'Обработка...' : 'Подписать и Разослать' }}
@@ -58,22 +58,82 @@
             </div>
         </div>
 
+        <div v-if="showPinModal" class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-50">
+            <div class="bg-white rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center relative overflow-hidden">
+                <div class="absolute top-0 left-0 w-full h-2 bg-purple-600"></div>
+                
+                <h3 class="text-2xl font-bold text-gray-900 mb-1">MSign Директора</h3>
+                <p class="text-sm text-gray-500 mb-6">Массовое подписание документов компании</p>
+                
+                <p class="text-gray-700 font-medium mb-4">Введите 4-значный PIN-код:</p>
+                
+                <div class="flex justify-center gap-3 mb-8">
+                    <input type="password" maxlength="1" v-model="pin1" ref="pin1Ref" @input="focusNext($event, 'pin2Ref')" class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none">
+                    <input type="password" maxlength="1" v-model="pin2" ref="pin2Ref" @input="focusNext($event, 'pin3Ref')" class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none">
+                    <input type="password" maxlength="1" v-model="pin3" ref="pin3Ref" @input="focusNext($event, 'pin4Ref')" class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none">
+                    <input type="password" maxlength="1" v-model="pin4" ref="pin4Ref" class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none">
+                </div>
+                
+                <div class="flex gap-3">
+                    <button @click="closePinModal" class="flex-1 py-3 text-gray-600 bg-gray-100 rounded-xl font-medium hover:bg-gray-200 transition-colors">Отмена</button>
+                    <button @click="executeSignAndSend" :disabled="!isPinValid || isSigning" class="flex-1 py-3 text-white bg-purple-600 rounded-xl font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center">
+                        <span v-if="isSigning" class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                        <span v-else>Подтвердить</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <script>
-        const { createApp, ref, onMounted } = Vue
+        const { createApp, ref, onMounted, computed } = Vue
         createApp({
             setup() {
                 const pendingCampaigns = ref([]);
                 const processingId = ref(null);
+                
+                // State для модалки MSign
+                const showPinModal = ref(false);
+                const isSigning = ref(false);
+                const activeCampaignId = ref(null);
+                const pin1 = ref('');
+                const pin2 = ref('');
+                const pin3 = ref('');
+                const pin4 = ref('');
 
-                // Функция для форматирования даты
+                // Форматирование даты
                 const formatDate = (dateStr) => {
                     if (!dateStr) return '-';
                     return new Date(dateStr).toLocaleString();
                 }
 
-                // Получаем все документы и группируем их в Кампании
+                // Проверка валидности ПИН-кода
+                const isPinValid = computed(() => {
+                    return pin1.value && pin2.value && pin3.value && pin4.value;
+                });
+
+                // Фокус на следующий инпут при вводе
+                const focusNext = (event, nextRefName) => {
+                    if (event.target.value.length === 1) {
+                        const nextEl = document.querySelector(`input[v-model="${nextRefName.replace('Ref', '')}"]`);
+                        if(nextEl) nextEl.focus();
+                    }
+                }
+
+                const closePinModal = () => {
+                    showPinModal.value = false;
+                    activeCampaignId.value = null;
+                    pin1.value = pin2.value = pin3.value = pin4.value = '';
+                }
+
+                // Открытие модалки для конкретной кампании
+                const initiateSign = (campaignId) => {
+                    activeCampaignId.value = campaignId;
+                    showPinModal.value = true;
+                }
+
+                // Получаем кампании
                 const fetchPendingCampaigns = async () => {
                     try {
                         const response = await fetch('http://localhost:8000/api/documents/all');
@@ -81,7 +141,6 @@
                         
                         const logs = await response.json();
                         
-                        // 1. УМНАЯ ФИЛЬТРАЦИЯ: Находим ID кампаний, которые УЖЕ ушли дальше
                         const processedCampaignIds = new Set();
                         logs.forEach(log => {
                             if (log.status === 'WAITING_EMPLOYEE' || log.status === 'FULLY_SIGNED') {
@@ -91,13 +150,11 @@
                             }
                         });
 
-                        // 2. Берем DRAFT, но ИСКЛЮЧАЕМ те кампании, которые уже обработаны
                         const drafts = logs.filter(log => 
                             (log.status === 'DRAFT' || log.status === 'PDF_GENERATED') && 
                             !processedCampaignIds.has(log.metadata_info?.campaign_id)
                         );
                         
-                        // Группируем оставшиеся DRAFT логи по campaign_id
                         const campaignsMap = new Map();
                         
                         drafts.forEach(log => {
@@ -124,22 +181,12 @@
                     }
                 }
 
-                // Главная логика: Подписать со стороны HR и Разослать
-                const signAndSend = async (campaignId) => {
-                    // Предупреждение для директора перед подписью
-                    const result = await Swal.fire({
-                        title: 'Утвердить пакет документов?',
-                        text: `Кампания #${campaignId} будет подписана ЭЦП компании и разослана сотрудникам на email.`,
-                        icon: 'question',
-                        showCancelButton: true,
-                        confirmButtonColor: '#9333ea', // Purple
-                        cancelButtonColor: '#9ca3af',
-                        confirmButtonText: 'Да, подписать и отправить',
-                        cancelButtonText: 'Отмена'
-                    });
-
-                    if (!result.isConfirmed) return;
-
+                // Финальное подписание после ввода ПИН
+                const executeSignAndSend = async () => {
+                    if (!activeCampaignId.value) return;
+                    
+                    const campaignId = activeCampaignId.value;
+                    isSigning.value = true;
                     processingId.value = campaignId;
 
                     try {
@@ -157,22 +204,25 @@
 
                         if (!sendRes.ok) throw new Error('Ошибка при рассылке писем');
 
+                        closePinModal();
+
                         // Успех!
                         Swal.fire({
                             title: 'Успешно!',
-                            text: 'Документы подписаны работодателем и отправлены сотрудникам (см. Mailpit).',
+                            text: 'Документы подписаны работодателем и отправлены сотрудникам.',
                             icon: 'success',
                             confirmButtonColor: '#9333ea',
                             timer: 3000
                         });
 
-                        // Обновляем список на экране (успешная кампания исчезнет)
                         await fetchPendingCampaigns();
 
                     } catch (error) {
                         console.error('Ошибка:', error);
+                        closePinModal();
                         Swal.fire('Системная ошибка', 'Не удалось завершить операцию', 'error');
                     } finally {
+                        isSigning.value = false;
                         processingId.value = null;
                     }
                 }
@@ -183,7 +233,8 @@
 
                 return { 
                     pendingCampaigns, processingId, formatDate, 
-                    fetchPendingCampaigns, signAndSend
+                    showPinModal, isSigning, pin1, pin2, pin3, pin4, isPinValid,
+                    fetchPendingCampaigns, initiateSign, closePinModal, focusNext, executeSignAndSend
                 }
             }
         }).mount('#app')
