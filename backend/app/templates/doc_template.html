@@ -36,11 +36,5 @@
         {{ document_content | safe }}
     </div>
 
-    <div class="stamp">
-        <div class="stamp-row">ДОКУМЕНТ ПОДПИСАН ПЭП</div>
-        <div class="stamp-row">ВЛАДЕЛЕЦ: {{ user_id }}</div>
-        <div class="stamp-row">ДАТА: {{ sign_date }}</div>
-        <div class="stamp-row">HASH: {{ doc_hash[:16] }}...</div>
-    </div>
 </body>
 </html>

@@ -2,52 +2,31 @@ import asyncio
 import hashlib
 import os
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timezone
 
 from jinja2 import Environment, FileSystemLoader
-from minio import Minio
 from playwright.async_api import async_playwright
 from sqlalchemy.orm import Session
-from minio.error import S3Error
 
 from app.celery_app import celery_app
 from app.core.database import SessionLocal
-from app import models  # Важно: импортируем весь пакет моделей
+from app import models
 
-# Настройки MinIO
-MINIO_URL = os.environ.get("MINIO_URL", "minio:9000")
-MINIO_USER = os.environ.get("MINIO_ROOT_USER", "admin")
-MINIO_PASS = os.environ.get("MINIO_ROOT_PASSWORD", "password123")
-BUCKET_NAME = "signed-documents"
-
-def get_minio_client():
-    client = Minio(MINIO_URL, access_key=MINIO_USER, secret_key=MINIO_PASS, secure=False)
-    try:
-        if not client.bucket_exists(BUCKET_NAME):
-            client.make_bucket(BUCKET_NAME)
-    except S3Error as e:
-        # Если бакет уже создан другим воркером — это не ошибка, идем дальше
-        if e.code != "BucketAlreadyOwnedByYou":
-            raise e
-    return client
+from app.services.storage import MinioService 
 
 async def render_pdf_with_playwright(audit_id: int, user_id: str, doc_type: str) -> bytes:
     """Генерация PDF с динамическим выбором контента"""
     
-    # Определяем путь к папке шаблонов относительно текущего файла
     current_dir = os.path.dirname(os.path.abspath(__file__))
     template_path = os.path.join(current_dir, "templates")
-    
     env = Environment(loader=FileSystemLoader(template_path))
     
-    # Пытаемся найти специфичный шаблон или используем базовый корпоративный
     template_name = f"{doc_type}.html"
-    if not os.path.exists(f"app/templates/{template_name}"):
-        template_name = "doc_template.html" # Наш универсальный шаблон со штампом
+    if not os.path.exists(os.path.join(template_path, template_name)):
+        template_name = "doc_template.html" 
     
     template = env.get_template(template_name)
     
-    # Справочник названий для заголовка внутри PDF
     titles = {
         "safety_instruction_2026": "ВВОДНЫЙ ИНСТРУКТАЖ ПО ТЕХНИКЕ БЕЗОПАСНОСТИ",
         "nda_2026": "СОГЛАШЕНИЕ О НЕРАЗГЛАШЕНИИ (NDA)",
@@ -73,7 +52,6 @@ async def render_pdf_with_playwright(audit_id: int, user_id: str, doc_type: str)
         """
     }
 
-    # 2. Данные для рендеринга (теперь со штампом)
     current_date = datetime.now().strftime("%d.%m.%Y %H:%M")
     current_content = doc_texts.get(doc_type, "Текст документа не найден в системе.")
     
@@ -83,15 +61,13 @@ async def render_pdf_with_playwright(audit_id: int, user_id: str, doc_type: str)
         audit_id=audit_id,
         user_id=user_id,
         sign_date=current_date,
-        doc_hash=hashlib.md5(str(audit_id).encode()).hexdigest()[:10] # Временный хэш для красоты
+        doc_hash=hashlib.md5(str(audit_id).encode()).hexdigest()[:10] 
     )
 
-    # 3. Рендеринг через Playwright
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
         page = await browser.new_page()
         await page.set_content(html_content)
-        # Ждем загрузки всех стилей
         await page.wait_for_load_state("networkidle")
         pdf_bytes = await page.pdf(
             format="A4", 
@@ -104,62 +80,49 @@ async def render_pdf_with_playwright(audit_id: int, user_id: str, doc_type: str)
 @celery_app.task(name="app.worker.generate_document_task")
 def generate_document_task(doc_id: int, user_id: str, doc_type: str):
     db: Session = SessionLocal()
-    minio_client = get_minio_client()
     
     try:
-        # 1. Ищем документ в новой таблице
         doc_record = db.query(models.AssignedDocument).filter(models.AssignedDocument.id == doc_id).first()
         if not doc_record:
             return {"status": "error", "message": "Record not found"}
 
-        # 2. Генерация PDF (Playwright)
-        # Передаем doc_id вместо audit_id
+        # ИСПОЛЬЗУЕМ НАШУ УМНУЮ ФУНКЦИЮ!
         pdf_bytes = asyncio.run(render_pdf_with_playwright(doc_id, user_id, doc_type))
         file_hash = hashlib.sha256(pdf_bytes).hexdigest()
         
-        # 3. Путь: организуем по кампаниям (campaigns/ID/original/file.pdf)
-        # Это упростит пакетную выгрузку для MSign
         campaign_id = doc_record.campaign_id
-        file_name = f"{user_id}_{doc_type}.pdf"
-        file_path = f"campaigns/{campaign_id}/original/{file_name}"
+        file_name = f"campaigns/{campaign_id}/original/{user_id}_{doc_type}.pdf"
         
-        # 4. Загрузка в MinIO
-        minio_client.put_object(
-            bucket_name=BUCKET_NAME,
-            object_name=file_path,
-            data=BytesIO(pdf_bytes),
-            length=len(pdf_bytes),
-            content_type="application/pdf"
-        )
+        minio_service = MinioService()
+        storage_path = minio_service.upload_pdf(file_name=file_name, pdf_bytes=pdf_bytes)
         
-        # 5. Обновляем статус и метаданные в AssignedDocument
-        doc_record.original_pdf_path = file_path
-        doc_record.status = models.DocStatus.DRAFT  # Остается DRAFT до подписи директора
-        doc_record.updated_at = datetime.now()
+        doc_record.original_pdf_path = storage_path
+        doc_record.status = models.DocStatus.DRAFT  
+        doc_record.updated_at = datetime.now(timezone.utc)
         
-        # Опционально: создаем запись в AuditTrail, что PDF готов (для истории)
         audit_log = models.AuditTrail(
             user_id=user_id,
             document_type=doc_type,
-            status="PDF_GENERATED",
+            status=models.DocStatus.DRAFT, 
             metadata_info={
-                "file_path": file_path,
+                "action": "pdf_generated", 
+                "file_path": storage_path,
                 "sha256_hash": file_hash,
                 "campaign_id": campaign_id
             }
         )
         db.add(audit_log)
-        
         db.commit()
-        return {"status": "success", "file": file_path, "doc_id": doc_id}
+        
+        return {"status": "success", "file": storage_path, "doc_id": doc_id}
         
     except Exception as e:
         db.rollback()
-        # Если упало, помечаем документ как ошибочный
         doc_record = db.query(models.AssignedDocument).filter(models.AssignedDocument.id == doc_id).first()
         if doc_record:
             doc_record.status = models.DocStatus.ERROR
             db.commit()
+        print(f"Ошибка в воркере: {e}") 
         raise e
     finally:
         db.close()

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Response
+from fastapi import FastAPI, Depends, HTTPException, Response, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -186,61 +186,128 @@ def create_campaign(request: CampaignCreateRequest, db: Session = Depends(get_db
 
 @app.post("/api/admin/campaigns/{campaign_id}/sign-by-hr")
 def sign_campaign_by_hr(campaign_id: int, db: Session = Depends(get_db)):
-    """Имитация подписи HR-директора через MSign."""
     campaign = db.query(models.DocumentCampaign).filter(models.DocumentCampaign.id == campaign_id).first()
     if not campaign:
         raise HTTPException(status_code=404, detail="Кампания не найдена")
 
-    msign_mock_response = {
-        "status": "SUCCESS",
-        "signature_id": f"sig_hr_{campaign_id}_{datetime.now().timestamp()}",
-        "signed_at": datetime.now().isoformat()
-    }
-
-    campaign.status = models.CampaignStatus.WAITING_EMPLOYEES
-    
-    # Исправлено: добавлен synchronize_session=False для надежности
+    # 1. Массово обновляем документы сотрудников
     db.query(models.AssignedDocument).filter(
         models.AssignedDocument.campaign_id == campaign_id
     ).update({"status": models.DocStatus.WAITING_EMPLOYEE}, synchronize_session=False)
 
+    # 2. Обновляем статус самой кампании
+    campaign.status = models.CampaignStatus.WAITING_EMPLOYEES
+    
+    # 3. ДОБАВЛЯЕМ ЛОГ В AUDIT TRAIL (Чтобы HR видел это в списке)
+    # Мы создаем один лог на кампанию, но фронтенд увидит переход статуса
+    new_log = models.AuditTrail(
+        user_id="SYSTEM_HR_DIR", # Кто подписал
+        document_type=campaign.document_type,
+        status=models.DocStatus.WAITING_EMPLOYEE,
+        metadata_info={
+            "campaign_id": campaign_id, 
+            "action": "batch_signed_by_hr_director",
+            "signature_id": f"sig_hr_{campaign_id}"
+        }
+    )
+    db.add(new_log)
+    
     db.commit()
 
-    return {
-        "message": f"Кампания {campaign_id} успешно подписана HR-директором",
-        "msign_data": msign_mock_response
-    }
+    return {"status": "success", "message": f"Кампания {campaign_id} переведена в режим ожидания сотрудников"}
 
+# # Функция, которая будет крутиться в фоне
+# def send_emails_in_background(docs, campaign_id: int):
+#     """
+#     Эта функция запустится ПОСЛЕ того, как API ответит клиенту 200 OK.
+#     Она не будет тормозить интерфейс HR-Директора.
+#     """
+#     for doc in docs:
+#         try:
+#             send_test_email(
+#                 f"{doc.user_id}@company.md", 
+#                 "Новый документ на подпись", 
+#                 f"Перейдите в портал для подписания документа (ID: {doc.id})."
+#             )
+#             # В идеале здесь же можно обновлять статусы писем (доставлено/ошибка),
+#             # но пока мы просто шлем в Mailpit.
+#         except Exception as e:
+#             print(f"Ошибка отправки email для {doc.user_id}: {e}")
+
+
+# @app.post("/api/admin/campaigns/{campaign_id}/send-notifications")
+# def send_campaign_notifications(campaign_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+#     """Рассылка уведомлений сотрудникам и обновление логов аудита."""
+    
+#     campaign = db.query(models.DocumentCampaign).filter(models.DocumentCampaign.id == campaign_id).first()
+#     if not campaign:
+#         raise HTTPException(status_code=404, detail="Кампания не найдена")
+
+#     docs = db.query(models.AssignedDocument).filter(
+#         models.AssignedDocument.campaign_id == campaign_id,
+#         models.AssignedDocument.status == models.DocStatus.WAITING_EMPLOYEE
+#     ).all()
+
+#     # 1. МАГИЯ ФОНА: Отдаем отправку писем FastAPI. 
+#     # Сервер не будет ждать их завершения!
+#     background_tasks.add_task(send_emails_in_background, docs, campaign_id)
+
+#     # 2. Мгновенно пишем логи в базу
+#     for doc in docs:
+#         new_log = models.AuditTrail(
+#             user_id=doc.user_id,
+#             document_type=campaign.document_type,
+#             status=models.DocStatus.WAITING_EMPLOYEE,
+#             metadata_info={"campaign_id": campaign_id, "action": "notification_sent"}
+#         )
+#         db.add(new_log)
+    
+#     db.commit()
+    
+#     return {"message": f"В фоне запущена рассылка {len(docs)} уведомлений. Проверьте Mailpit."}
+
+
+# 1. Обновляем саму фоновую функцию (теперь она принимает список словарей)
+def send_emails_in_background(docs_data: list, campaign_id: int):
+    """
+    Фоновая задача. Принимает список простых словарей, а не объектов БД.
+    """
+    for doc in docs_data:
+        try:
+            send_test_email(
+                f"{doc['user_id']}@company.md", 
+                "Новый документ на подпись", 
+                f"Перейдите в портал для подписания документа (ID: {doc['id']})."
+            )
+        except Exception as e:
+            print(f"Ошибка отправки email для {doc['user_id']}: {e}")
+
+
+# 2. Обновляем эндпоинт
 @app.post("/api/admin/campaigns/{campaign_id}/send-notifications")
-def send_campaign_notifications(campaign_id: int, db: Session = Depends(get_db)):
+def send_campaign_notifications(campaign_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Рассылка уведомлений сотрудникам и обновление логов аудита."""
     
-    # 1. Используем ПРАВИЛЬНОЕ имя модели: DocumentCampaign
     campaign = db.query(models.DocumentCampaign).filter(models.DocumentCampaign.id == campaign_id).first()
-    
     if not campaign:
         raise HTTPException(status_code=404, detail="Кампания не найдена")
-        
-    doc_type = campaign.document_type 
 
-    # 2. Находим документы (используем AssignedDocument)
     docs = db.query(models.AssignedDocument).filter(
         models.AssignedDocument.campaign_id == campaign_id,
         models.AssignedDocument.status == models.DocStatus.WAITING_EMPLOYEE
     ).all()
 
+    # МАГИЯ ЗДЕСЬ: Извлекаем нужные данные в обычный Python-список
+    docs_data_for_background = [{"id": doc.id, "user_id": doc.user_id} for doc in docs]
+
+    # Отдаем в фоне простой список словарей
+    background_tasks.add_task(send_emails_in_background, docs_data_for_background, campaign_id)
+
+    # Записываем логи аудита
     for doc in docs:
-        # Отправка письма в Mailpit
-        send_test_email(
-            f"{doc.user_id}@company.md", 
-            "Новый документ на подпись", 
-            f"Перейдите в портал для подписания документа (ID: {doc.id})."
-        )
-        
-        # 3. Пишем лог аудита, чтобы фронтенд увидел обновление
         new_log = models.AuditTrail(
             user_id=doc.user_id,
-            document_type=doc_type,
+            document_type=campaign.document_type,
             status=models.DocStatus.WAITING_EMPLOYEE,
             metadata_info={"campaign_id": campaign_id, "action": "notification_sent"}
         )
@@ -296,33 +363,47 @@ def prepare_campaign_signature(campaign_id: int, db: Session = Depends(get_db)):
     }
 
 @app.get("/api/documents/{user_id}/{doc_id}/pdf")
-def get_document_pdf(user_id: str, doc_id: str, db: Session = Depends(get_db)):
-    doc = db.query(models.AuditTrail).filter(
-        models.AuditTrail.user_id == user_id,
-        models.AuditTrail.document_type == doc_id
-    ).order_by(models.AuditTrail.id.desc()).first()
-    
-    if not doc or doc.status != models.DocStatus.FULLY_SIGNED:
-        raise HTTPException(status_code=404, detail="PDF не найден")
-    
-    metadata = doc.metadata_info or {}
-    file_path = metadata.get("file_path")
-    
-    if file_path:
-        object_name = file_path.replace("signed-documents/", "")
-    else:
-        year = doc.created_at.year if doc.created_at else 2026
-        object_name = f"{doc.document_type}/{year}/{doc.id}_{doc.document_type}_{doc.user_id}.pdf"
-    
+def get_document_pdf(user_id: str, doc_id: int, db: Session = Depends(get_db)):
+    """
+    Отдает PDF файл напрямую из MinIO.
+    doc_id здесь — это ID из таблицы assigned_documents (или из метаданных лога).
+    """
+    # 1. Сначала пытаемся найти документ напрямую по ID
+    doc = db.query(models.AssignedDocument).filter(
+        models.AssignedDocument.id == doc_id,
+        models.AssignedDocument.user_id == user_id
+    ).first()
+
+    # 2. Если не нашли по ID (например, пришел ID лога), ищем через AuditTrail
+    if not doc:
+        audit_log = db.query(models.AuditTrail).filter(models.AuditTrail.id == doc_id).first()
+        if audit_log and "campaign_id" in (audit_log.metadata_info or {}):
+            doc = db.query(models.AssignedDocument).filter(
+                models.AssignedDocument.campaign_id == audit_log.metadata_info["campaign_id"],
+                models.AssignedDocument.user_id == user_id
+            ).first()
+
+    if not doc or not doc.original_pdf_path:
+        raise HTTPException(status_code=404, detail="Документ или путь к PDF не найден")
+
+    # 3. Очищаем путь от имени бакета, если он там есть
+    # 'signed-documents/campaigns/6/original/file.pdf' -> 'campaigns/6/original/file.pdf'
+    object_name = doc.original_pdf_path.replace("signed-documents/", "").lstrip("/")
+
     try:
         response = minio_client.get_object("signed-documents", object_name)
         pdf_bytes = response.read()
         response.close()
         response.release_conn()
-        return Response(content=pdf_bytes, media_type="application/pdf")
+        
+        return Response(
+            content=pdf_bytes, 
+            media_type="application/pdf",
+            headers={"Content-Disposition": "inline"} # Чтобы открывался в браузере, а не качался
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка MinIO: {str(e)}")
-    
+        print(f"MinIO Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Файл не найден в хранилище: {object_name}")
 
 @app.get("/api/admin/stats")
 def get_admin_stats(db: Session = Depends(get_db)):

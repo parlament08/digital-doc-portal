@@ -66,33 +66,14 @@
                 </div>
 
                 <div class="flex-1 p-8 overflow-y-auto flex justify-center items-start bg-gray-200">
-                    <div class="bg-white w-full max-w-4xl min-h-[800px] shadow-lg border border-gray-300 rounded-lg p-12 flex flex-col">
-                        
-                        <div class="border-b-2 border-gray-800 pb-4 mb-8 text-center">
-                            <h1 class="text-2xl font-bold uppercase tracking-widest">{{ selectedDoc.document_type.replace('_', ' ') }}</h1>
-                            <p class="text-gray-500 mt-2">Документ сгенерирован системой КЭДО</p>
-                        </div>
-                        
-                        <div class="prose max-w-none flex-1 text-gray-700 leading-relaxed">
-                            <p>Настоящий документ подтверждает согласие сотрудника <strong>{{ selectedDoc.user_id }}</strong> с условиями кампании #{{ selectedDoc.metadata_info?.campaign_id }}.</p>
-                            <p class="mt-4">Документ подписан со стороны работодателя.</p>
-                            
-                            <div class="mt-12 p-6 bg-gray-50 border border-gray-200 rounded-lg text-sm">
-                                <h4 class="font-bold text-gray-900 mb-2">Блок подписей:</h4>
-                                <div class="flex justify-between mt-4">
-                                    <div>
-                                        <p class="text-gray-500">Работодатель (HR Директор):</p>
-                                        <p class="font-mono text-xs mt-1 text-blue-600">[УКЭП Действительна]</p>
-                                    </div>
-                                    <div class="text-right">
-                                        <p class="text-gray-500">Сотрудник (Вы):</p>
-                                        <p v-if="selectedDoc.status === 'FULLY_SIGNED'" class="font-mono text-xs mt-1 text-green-600">[ПЭП/MSign Успешно]</p>
-                                        <p v-else class="font-mono text-xs mt-1 text-red-500">[ОЖИДАЕТ ПОДПИСИ]</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
+                    <div class="bg-white w-full max-w-4xl h-[80vh] shadow-lg border border-gray-300 rounded-lg overflow-hidden flex flex-col">
+                        <iframe 
+                            :src="'http://localhost:8000/api/documents/' + currentUser + '/' + selectedDoc.id + '/pdf'" 
+                            width="100%" 
+                            height="100%" 
+                            class="flex-1"
+                            style="border: none;">
+                        </iframe>
                     </div>
                 </div>
 
@@ -156,11 +137,10 @@
 
         createApp({
             setup() {
-                const currentUser = ref('emp_001') // По умолчанию
+                const currentUser = ref('emp_001') 
                 const documents = ref([]) 
                 const selectedDoc = ref(null)
                 
-                // State для модалки MSign
                 const showPinModal = ref(false)
                 const isSigning = ref(false)
                 const pin1 = ref('')
@@ -168,58 +148,46 @@
                 const pin3 = ref('')
                 const pin4 = ref('')
 
-                // Проверка, введены ли все 4 цифры
                 const isPinValid = computed(() => {
                     return pin1.value && pin2.value && pin3.value && pin4.value
                 })
 
-                // Фокус на следующий инпут при вводе пин-кода
                 const focusNext = (event, nextRefName) => {
                     if (event.target.value.length === 1) {
-                        // Небольшой хак для доступа к refs во Vue 3 Composition API без явного объявления каждого
                         const nextEl = document.querySelector(`input[v-model="${nextRefName.replace('Ref', '')}"]`);
                         if(nextEl) nextEl.focus();
                     }
                 }
 
-                // Закрытие модалки с очисткой
                 const closePinModal = () => {
                     showPinModal.value = false;
                     pin1.value = pin2.value = pin3.value = pin4.value = '';
                 }
 
-                // Загрузка документов конкретного пользователя
                 const fetchDocuments = async () => {
                     try {
                         const response = await fetch('http://localhost:8000/api/documents/all');
                         if (response.ok) {
                             const allLogs = await response.json();
                             
-                            // 1. Оставляем логи только текущего сотрудника
                             const userLogs = allLogs.filter(d => d.user_id === currentUser.value);
-                            
-                            // 2. Группируем логи по campaign_id, оставляя ТОЛЬКО самый свежий
                             const latestDocsMap = new Map();
                             
                             userLogs.forEach(log => {
                                 const campaignId = log.metadata_info?.campaign_id;
                                 if (campaignId) {
-                                    // Если документа еще нет в Map, ИЛИ текущий лог новее (id больше)
                                     if (!latestDocsMap.has(campaignId) || latestDocsMap.get(campaignId).id < log.id) {
                                         latestDocsMap.set(campaignId, log);
                                     }
                                 }
                             });
 
-                            // 3. Превращаем Map обратно в массив и оставляем нужные статусы
                             documents.value = Array.from(latestDocsMap.values()).filter(d => 
                                 d.status === 'WAITING_EMPLOYEE' || d.status === 'FULLY_SIGNED'
                             );
                             
-                            // 4. Сортируем: свежие сверху
                             documents.value.sort((a, b) => b.id - a.id);
                             
-                            // 5. Если документ был открыт, обновляем его статус на экране (чтобы пропала кнопка и появилась зеленка)
                             if (selectedDoc.value) {
                                 const currentCampaignId = selectedDoc.value.metadata_info?.campaign_id;
                                 const updatedDoc = documents.value.find(d => d.metadata_info?.campaign_id === currentCampaignId);
@@ -227,7 +195,7 @@
                                 if (updatedDoc) {
                                     selectedDoc.value = updatedDoc;
                                 } else {
-                                    selectedDoc.value = null; // Если документ пропал из списка
+                                    selectedDoc.value = null; 
                                 }
                             }
                         }
@@ -245,13 +213,11 @@
                     selectedDoc.value = doc
                 }
 
-                // Финальный вызов API для подписи
                 const executeSign = async () => {
                     if (!selectedDoc.value) return;
                     isSigning.value = true;
                     
                     try {
-                        // Дергаем наш новый эндпоинт
                         const response = await fetch(`http://localhost:8000/api/documents/${selectedDoc.value.id}/employee-sign`, {
                             method: 'POST'
                         });
@@ -267,10 +233,7 @@
                                 timer: 2000
                             });
 
-                            // Обновляем список, чтобы статус сменился на FULLY_SIGNED
                             await fetchDocuments();
-                            
-                            // Обновляем выбранный документ
                             selectedDoc.value = documents.value.find(d => d.id === selectedDoc.value.id);
                             
                         } else {
