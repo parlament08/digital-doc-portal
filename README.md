@@ -1,13 +1,15 @@
 # Digital Doc Portal (Enterprise MVP)
 
-Welcome to the **Digital Doc Portal**, a highly resilient, microservices-based system designed for legally significant electronic document management. This project enables HR managers to dynamically assign documents and employees to sign internal documents (like Safety Instructions and NDAs) using a Simple Electronic Signature (PEP) while ensuring an immutable audit trail, automated PDF generation, and enterprise-grade asynchronous processing.
+Welcome to the **Digital Doc Portal**, a highly resilient, microservices-based system designed for legally significant electronic document management (KEDO). This project enables HR departments to dynamically generate, route, and sign internal documents (like Safety Instructions and NDAs) using a Simple Electronic Signature (MSign/PEP) while ensuring an immutable audit trail, automated PDF generation, and enterprise-grade asynchronous processing.
 
 ## Tech Stack
-* **Frontend:** Vue.js 3 (Composition API), Tailwind CSS, SweetAlert2
+* **Frontend:** Vue.js 3 (Composition API), Tailwind CSS, SweetAlert2 (Served via FastAPI)
 * **Backend API:** FastAPI (Python 3.10)
-* **Background Tasks:** Celery (using PostgreSQL as the message broker and result backend)
-* **Database:** PostgreSQL 15
-* **Storage:** MinIO (S3-compatible object storage)
+* **Background Tasks (Heavy):** Celery (using PostgreSQL as the message broker) for PDF generation
+* **Background Tasks (Light):** FastAPI `BackgroundTasks` for non-blocking email notifications
+* **Database:** PostgreSQL 15 (relational data & audit logs)
+* **Storage:** MinIO (S3-compatible object storage for clean PDFs)
+* **Email Testing:** Mailpit (Local SMTP server for catching notification emails)
 * **PDF Rendering:** Playwright (Chromium Headless) + Jinja2 Templates
 
 ---
@@ -40,45 +42,37 @@ Check the status using:
 docker compose ps
 ```
 
-Ensure `doc_portal_db`, `doc_portal_minio`, `doc_portal_api`, and `doc_portal_worker` are all in the **Up** state.
-
-## 3. Monitor the Background Worker
-
-Unlike previous versions, **you do not need to start the worker manually**. It runs automatically as a dedicated Docker service. To watch the background PDF generation in real-time, tail the worker logs:
-
-```bash
-docker logs -f doc_portal_worker
-```
-*(Press `Ctrl+C` to exit the log view).*
+Ensure `doc_portal_db`, `doc_portal_minio`, `doc_portal_api`, `mailpit`, and `doc_portal_worker` are all in the **Up** state.
 
 ---
 
 ## Services & Ports Mapping
 
-Once everything is running, you can access the various components via the following local URLs:
+Once everything is running, access the various roles and tools via the following local URLs. *(Note: UI templates are now served directly by FastAPI)*:
 
 | Service | URL / Port | Description | Credentials |
 | :--- | :--- | :--- | :--- |
-| **Employee Cabinet** | [http://127.0.0.1:5500/frontend/index.html](http://127.0.0.1:5500/frontend/index.html) | Vue.js UI for employees to view and sign assigned documents. | N/A |
-| **HR Admin Panel** | [http://127.0.0.1:5500/frontend/hr.html](http://127.0.0.1:5500/frontend/hr.html) | Vue.js UI for HR to assign documents and view real-time stats. | N/A |
+| **HR Specialist Panel** | [http://localhost:8000/hr](http://localhost:8000/hr) | Dashboard to create campaigns and assign documents. | N/A |
+| **HR Director Panel** | [http://localhost:8000/director/hr](http://localhost:8000/director/hr) | Batch signing interface (MSign) for the employer. | N/A |
+| **Employee Cabinet** | [http://localhost:8000/cabinet](http://localhost:8000/cabinet) | Workspace for employees to view (PDF iframe) and sign docs. | N/A |
+| **Mailpit UI** | [http://localhost:8025](http://localhost:8025) | Catch-all email inbox for employee notifications. | N/A |
 | **FastAPI Swagger** | [http://localhost:8000/docs](http://localhost:8000/docs) | OpenAPI documentation & interactive API testing. | N/A |
-| **MinIO Console** | [http://localhost:9001](http://localhost:9001) | S3 Storage Administration UI. | `admin` / `*****` |
+| **MinIO Console** | [http://localhost:9001](http://localhost:9001) | S3 Storage Administration UI. | `admin` / `password123` |
 | **MinIO API** | `localhost:9000` | Internal port for S3 SDK connections. | N/A |
-| **PostgreSQL** | `localhost:5433` | Database connection port (mapped to 5432 internally). | `user` / `*****` |
+| **PostgreSQL** | `localhost:5433` | Database connection port (mapped to 5432 internally). | `user` / `password` |
 
 ---
 
 ## The Core Workflow (How it Works)
 
-Understanding the data flow is crucial for maintaining and scaling the system:
+The system implements a strict state machine (`DRAFT` -> `WAITING_EMPLOYEE` -> `FULLY_SIGNED`) distributed across multiple microservices:
 
-1. **Assignment:** HR selects an employee and a template in the Admin Panel. The system records this in the `assigned_documents` table.
-2. **Trigger:** The employee sees the pending document in their UI, reviews it, and clicks "Sign" (calls the `POST /api/sign` endpoint).
-3. **API Validation:** FastAPI receives the data, creates a `GENERATION_IN_PROGRESS` audit record in Postgres, and immediately returns a `200 OK` with a `task_id`.
-4. **Task Dispatch:** FastAPI sends an asynchronous task to the **Celery Queue** (routed through Postgres).
-5. **Execution:** The Celery Worker (`doc_portal_worker`) picks up the task.
-6. **Heavy Lifting:** The Worker uses **Jinja2** to inject dynamic data into an HTML template, launches a headless **Playwright** Chromium browser to render it into a pixel-perfect PDF, calculates the SHA-256 hash, and uploads the file to MinIO.
-7. **Finalization:** The Worker updates the Postgres audit record status to `DOCUMENT_SIGNED_PEP`.
+1. **Campaign Creation (HR Specialist):** HR selects employees and a document type. The API creates a campaign and dispatches tasks to Celery.
+2. **PDF Generation (Celery Worker):** The worker uses Jinja2 to compile the text, Playwright to render a clean PDF, uploads it to MinIO, and updates the document status to `DRAFT`.
+3. **Employer Signature (HR Director):** The HR Director reviews pending campaigns and signs them using an MSign PIN modal. The status changes to `WAITING_EMPLOYEE`.
+4. **Asynchronous Notifications (FastAPI):** Immediately after the Director signs, FastAPI `BackgroundTasks` silently sends out email notifications via Mailpit without blocking the UI.
+5. **Employee Signature:** The employee receives the email, logs into their Cabinet, views the pure PDF fetched directly from MinIO, and signs using their MSign PIN.
+6. **Audit Trail:** Every action is immutably logged in the `audit_trail` table, serving as the single source of truth for the document's legal status.
 
 ---
 
@@ -87,10 +81,10 @@ Understanding the data flow is crucial for maintaining and scaling the system:
 You can prove the enterprise reliability of this system by simulating a catastrophic failure:
 
 1. Stop the Worker container completely: `docker compose stop worker`
-2. Assign and sign a document via the UI.
-3. Notice the frontend still responds instantly (the task is safely stored in the queue).
+2. Create a new campaign via the HR Specialist UI.
+3. Notice the frontend responds instantly (the generation tasks are safely stored in the PostgreSQL broker queue).
 4. Restart the Worker: `docker compose start worker`
-5. Watch the Worker logs: it will instantly pick up the pending task, generate the PDF, and save the file without losing any data!
+5. Watch the Worker logs (`docker logs -f doc_portal_worker`): it will instantly pick up the pending tasks, generate the PDFs, and upload them to MinIO without losing any data.
 
 ---
 
@@ -98,23 +92,23 @@ You can prove the enterprise reliability of this system by simulating a catastro
 
 ### 1. "Connection Refused" to Database
 If the API or Worker crashes with a Postgres connection error, it usually means the database was still booting up. 
-**Fix:** We have implemented a `depends_on: condition: service_healthy` in `docker-compose.yml` to prevent this, but if it happens, simply restart the services:
+**Fix:** We have implemented a `depends_on: condition: service_healthy` in `docker-compose.yml`, but if it occurs, simply restart the services:
 
 ```bash
 docker compose restart backend worker
 ```
 
-### 2. Playwright "Missing Dependencies" Error
-If the worker throws an error about missing libraries (like `libpango` or `libcairo`), it means the Dockerfile is not using the official Microsoft image.
-**Fix:** Ensure your `backend/Dockerfile` starts with `FROM mcr.microsoft.com/playwright/python:v1.41.1-jammy` and rebuild the images using `docker compose build --no-cache`.
+### 2. Emails Not Arriving
+If documents are signed by the HR Director but emails aren't showing up:
+**Fix:** Verify the Mailpit container is running and accessible. Check the FastAPI logs (`docker logs doc_portal_api`) for SMTP connection errors.
 
-### 3. Database Schema / Alembic Errors
-If you changed SQLAlchemy models and need to start fresh (and don't mind losing local dev data), wipe the Docker volumes.
-**Fix:** Run `docker compose down -v` to destroy the containers and volumes, then rebuild with `docker compose up -d --build`.
+### 3. Missing PDFs in Employee Cabinet
+If the iframe shows an error instead of the document:
+**Fix:** Ensure MinIO is running and the `signed-documents` bucket exists. Check the Worker logs to confirm Playwright successfully rendered and uploaded the file.
 
 ### 4. Database Reset (Clean Slate)
-To wipe all assignments and audit logs for a fresh test run without rebuilding containers, execute the following command in your terminal:
+To wipe all assignments, campaigns, and audit logs for a fresh test run without rebuilding containers, execute:
 
 ```bash
-docker exec -it doc_portal_db psql -U user -d doc_portal -c "TRUNCATE assigned_documents, audit_trail RESTART IDENTITY;"
+docker exec -it doc_portal_db psql -U user -d doc_portal -c "TRUNCATE document_campaigns, assigned_documents, audit_trail RESTART IDENTITY CASCADE;"
 ```
