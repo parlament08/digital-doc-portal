@@ -14,8 +14,9 @@ from email.message import EmailMessage
 from app.celery_app import celery_app
 from app.core.database import engine, get_db, SessionLocal
 from app import models 
-from app.models.workflow import WorkflowTemplate, WorkflowStep, SystemRole # Импорт BPM
-from app.init_db import init_workflow_templates # Импорт скрипта инициализации
+from app.models.workflow import WorkflowTemplate, WorkflowStep, SystemRole
+from app.models.assigned_document import DocumentCampaign, AssignedDocument
+from app.init_db import init_workflow_templates
 
 # Автоматическое создание всех таблиц
 models.Base.metadata.create_all(bind=engine)
@@ -88,17 +89,18 @@ def send_emails_in_background(docs_data: list, campaign_id: int):
 def get_universal_inbox(role: str, user_id: str = None, db: Session = Depends(get_db)):
     """
     Умный Инбокс. Возвращает документы, которые СЕЙЧАС ждут подписи этой роли.
-    Если роль 'employee', то показывает только его личные документы.
-    Если роль 'sys_admin', показывает все документы по компании, ждущие админа.
     """
-    # Делаем JOIN документа с таблицей шагов по текущему индексу
-    query = db.query(models.AssignedDocument, models.WorkflowStep).join(
+    # Делаем JOIN с ТРЕМЯ таблицами: Документ, Шаг и Кампания (чтобы достать типы файлов)
+    query = db.query(models.AssignedDocument, models.WorkflowStep, models.DocumentCampaign).join(
         models.WorkflowStep,
         (models.AssignedDocument.workflow_template_id == models.WorkflowStep.template_id) &
         (models.AssignedDocument.current_step_order == models.WorkflowStep.step_order)
+    ).join(
+        models.DocumentCampaign, 
+        models.AssignedDocument.campaign_id == models.DocumentCampaign.id
     ).filter(
         models.WorkflowStep.role_required == role,
-        models.AssignedDocument.status != "FULLY_SIGNED" # Не берем завершенные
+        models.AssignedDocument.status != "FULLY_SIGNED" 
     )
 
     if role == SystemRole.EMPLOYEE.value and user_id:
@@ -107,14 +109,19 @@ def get_universal_inbox(role: str, user_id: str = None, db: Session = Depends(ge
     results = query.all()
     
     inbox = []
-    for doc, step in results:
+    # Теперь мы распаковываем три объекта
+    for doc, step, campaign in results:
         inbox.append({
             "doc_id": doc.id,
             "campaign_id": doc.campaign_id,
             "user_id": doc.user_id,
             "workflow_step": step.step_order,
             "is_final_step": step.is_final,
-            "created_at": doc.created_at.strftime("%d.%m.%Y")
+            # ИСПРАВЛЕНИЕ 1: Отдаем реальный тип и название из кампании
+            "document_type": campaign.document_type,
+            "title": campaign.title,
+            # ИСПРАВЛЕНИЕ 2: Отдаем дату в формате ISO, чтобы фронтенд сохранил часы и минуты
+            "created_at": doc.created_at.isoformat() if doc.created_at else None
         })
     return inbox
 
@@ -169,19 +176,24 @@ def universal_sign_document(doc_id: int, req: SignRequest, db: Session = Depends
 @app.post("/api/admin/campaigns/create")
 def create_campaign(request: CampaignCreateRequest, db: Session = Depends(get_db)):
     try:
-        # 1. ОПРЕДЕЛЯЕМ МАРШРУТ
+        # 1. ОПРЕДЕЛЯЕМ МАРШРУТ И ТИП ДОКУМЕНТА
         target_template_id = None
+        final_doc_type = None
 
         if request.custom_steps:
-            # СОЗДАЕМ КАСТОМНЫЙ ШАБЛОН НА ЛЕТУ
+            # СЦЕНАРИЙ А: Собрать вручную (берем doc_type из запроса)
+            if not request.document_type:
+                raise HTTPException(status_code=400, detail="Для кастомного маршрута нужно выбрать тип файла")
+            
+            final_doc_type = request.document_type
+            
             new_template = models.WorkflowTemplate(
                 name=f"Custom: {request.title} ({datetime.now().strftime('%d.%m %H:%M')})",
-                document_type=request.document_type
+                document_type=final_doc_type
             )
             db.add(new_template)
-            db.flush() # Получаем ID шаблона
+            db.flush() 
             
-            # Нарезаем шаги из присланного массива ролей
             for idx, role in enumerate(request.custom_steps):
                 new_step = models.WorkflowStep(
                     template_id=new_template.id,
@@ -193,43 +205,49 @@ def create_campaign(request: CampaignCreateRequest, db: Session = Depends(get_db
             
             target_template_id = new_template.id
         else:
-            # Берем существующий ID
-            target_template_id = request.template_id
+            # СЦЕНАРИЙ Б: Готовый шаблон (берем doc_type ИЗ БАЗЫ)
+            template = db.query(models.WorkflowTemplate).filter(models.WorkflowTemplate.id == request.template_id).first()
+            if not template:
+                raise HTTPException(status_code=404, detail="Шаблон маршрута не найден")
+            
+            target_template_id = template.id
+            final_doc_type = template.document_type # ПРИВЯЗКА: игнорируем то, что пришло с фронта
 
-        if not target_template_id:
-            raise HTTPException(status_code=400, detail="Не указан маршрут")
-
-        # 2. СОЗДАЕМ КАМПАНИЮ И ДОКУМЕНТЫ (как раньше)
+        # 2. СОЗДАЕМ КАМПАНИЮ
         new_campaign = models.DocumentCampaign(
             title=request.title,
             created_by_hr_id="SYSTEM_HR",
             hr_director_id="SYSTEM_HR_DIR",
-            document_type=request.document_type,
+            document_type=final_doc_type, # Используем определенный выше тип
             status=models.CampaignStatus.GENERATING_PDFS
         )
         db.add(new_campaign)
         db.flush()
 
+        # 3. СОЗДАЕМ ДОКУМЕНТЫ И ЗАПУСКАЕМ CELERY
         for emp_id in request.employee_ids:
             new_doc = models.AssignedDocument(
                 campaign_id=new_campaign.id,
                 user_id=emp_id,
                 workflow_template_id=target_template_id,
                 current_step_order=1,
-                status="DRAFT"
+                status=models.DocStatus.DRAFT # Используй Enum, если он есть
             )
             db.add(new_doc)
-            db.commit()
-            db.refresh(new_doc)
+            db.flush() # Используем flush, чтобы получить ID, но закоммитим в конце пачкой
 
+            # Отправляем задачу в Celery с ПРАВИЛЬНЫМ типом документа
             celery_app.send_task(
                 "app.worker.generate_document_task", 
-                args=[new_doc.id, new_doc.user_id, request.document_type]
+                args=[new_doc.id, emp_id, final_doc_type]
             )
 
-        return {"status": "success", "template_id": target_template_id}
+        db.commit()
+        return {"status": "success", "campaign_id": new_campaign.id, "document_type": final_doc_type}
+
     except Exception as e:
         db.rollback()
+        print(f"Ошибка при создании кампании: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/admin/campaigns/{campaign_id}/sign-by-hr")
@@ -256,12 +274,33 @@ def sign_campaign_by_hr(campaign_id: int, db: Session = Depends(get_db)):
 
     return {"status": "success"}
 
-# --- ОСТАЛЬНЫЕ ЭНДПОИНТЫ (Без изменений) ---
-# ... (Тут остаются твои get_all_audit_logs, send_campaign_notifications, get_document_pdf, get_admin_stats и html-роуты) ...
-
 @app.get("/api/documents/all")
-def get_all_audit_logs(db: Session = Depends(get_db)):
-    return db.query(models.AuditTrail).order_by(models.AuditTrail.id.desc()).all()
+def get_all_documents(db: Session = Depends(get_db)):
+    """Возвращает актуальный список документов для таблицы HR-панели"""
+    
+    # Берем реальные документы и их кампании
+    results = db.query(models.AssignedDocument, models.DocumentCampaign).join(
+        models.DocumentCampaign, 
+        models.AssignedDocument.campaign_id == models.DocumentCampaign.id
+    ).order_by(models.AssignedDocument.id.desc()).all()
+    
+    output = []
+    for doc, campaign in results:
+        # Извлекаем значение статуса (если это Enum)
+        current_status = doc.status.value if hasattr(doc.status, 'value') else doc.status
+        
+        # Для даты берем updated_at (чтобы видеть время последней подписи), либо created_at
+        timestamp = doc.updated_at or doc.created_at
+        
+        output.append({
+            "id": doc.id,
+            "user_id": doc.user_id,
+            "document_type": campaign.document_type, # Правильный тип из кампании
+            "status": current_status,                # Реальный статус
+            "created_at": timestamp.isoformat() if timestamp else None
+        })
+        
+    return output
 
 @app.post("/api/admin/campaigns/{campaign_id}/send-notifications")
 def send_campaign_notifications(campaign_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -316,9 +355,48 @@ def get_document_pdf(user_id: str, doc_id: int, db: Session = Depends(get_db)):
     
 @app.get("/api/bpm/templates")
 def get_workflow_templates(db: Session = Depends(get_db)):
-    """Отдает список всех доступных маршрутов для выпадающего списка HR"""
-    templates = db.query(WorkflowTemplate).all()
-    return [{"id": t.id, "name": t.name, "doc_type": t.document_type} for t in templates]
+    templates = db.query(models.WorkflowTemplate).all()
+    return [
+        {
+            "id": t.id,
+            "name": t.name,
+            "document_type": t.document_type,
+            "steps": [step.role_required for step in sorted(t.steps, key=lambda s: s.step_order)]
+        } for t in templates
+    ]
+
+@app.get("/api/documents/employee/{user_id}/all")
+def get_employee_my_documents(user_id: str, db: Session = Depends(get_db)):
+    """Возвращает все реальные документы сотрудника + умные заголовки"""
+    
+    # Добавляем OUTER JOIN с таблицей шаблонов
+    results = db.query(models.AssignedDocument, models.DocumentCampaign, models.WorkflowTemplate)\
+        .join(models.DocumentCampaign, models.AssignedDocument.campaign_id == models.DocumentCampaign.id)\
+        .outerjoin(models.WorkflowTemplate, models.AssignedDocument.workflow_template_id == models.WorkflowTemplate.id)\
+        .filter(models.AssignedDocument.user_id == user_id)\
+        .order_by(models.AssignedDocument.id.desc())\
+        .all()
+    
+    output = []
+    for doc, campaign, template in results:
+        # УМНАЯ ЛОГИКА ЗАГОЛОВКА:
+        display_title = campaign.title
+        
+        # Если HR ничего не ввел (или там дефолтный текст), а шаблон существует
+        if (not display_title or display_title == "Без названия") and template:
+            display_title = template.name
+            
+        output.append({
+            "id": doc.id,
+            "doc_id": doc.id,
+            "campaign_id": doc.campaign_id,
+            "document_type": campaign.document_type, 
+            "title": display_title, # Отдаем проверенный заголовок
+            "status": doc.status,
+            "created_at": doc.created_at
+        })
+        
+    return output
 
 @app.get("/hr")
 def page_hr(): return FileResponse("templates/hr_dashboard.html")

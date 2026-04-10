@@ -1,9 +1,6 @@
 import enum
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
 from sqlalchemy.orm import relationship
-
-# ВАЖНО: Импортируй Base оттуда, где он у тебя объявлен 
-# (обычно это app.core.database или app.models.base)
 from app.core.database import Base 
 
 class SystemRole(str, enum.Enum):

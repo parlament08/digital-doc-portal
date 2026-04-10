@@ -12,28 +12,34 @@
         
         <div class="flex justify-between items-center mb-10">
             <div>
-                <span class="bg-purple-100 text-purple-800 text-xs font-bold px-3 py-1 rounded-full uppercase">Режим: HR-Директор</span>
+                <span class="bg-purple-100 text-purple-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide">Режим: HR-Директор</span>
                 <h1 class="text-3xl font-bold text-slate-900 mt-3">Утверждение пакетов (BPM)</h1>
             </div>
-            <button @click="fetchInbox" class="bg-white border border-slate-300 hover:bg-slate-50 px-4 py-2 rounded-xl font-medium">
+            <button @click="fetchInbox" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-xl font-medium transition-colors">
                 Обновить
             </button>
         </div>
 
         <div v-if="campaigns.length === 0" class="bg-white p-12 rounded-2xl shadow-sm border border-slate-100 text-center">
-            <h3 class="text-lg font-medium">Всё подписано!</h3>
+            <h3 class="text-lg font-medium text-slate-900">Всё подписано!</h3>
         </div>
 
         <div v-else class="grid grid-cols-1 gap-4">
-            <div v-for="camp in campaigns" :key="camp.id" class="bg-white p-6 rounded-2xl shadow-sm border border-l-4 border-l-purple-500 flex items-center justify-between">
+            <div v-for="camp in campaigns" :key="camp.id" class="bg-white p-6 rounded-2xl shadow-sm border border-l-4 border-l-purple-500 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div>
                     <span class="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded">Кампания #{{ camp.id }}</span>
-                    <h3 class="text-xl font-bold mt-2">Документов в пакете: {{ camp.docsCount }}</h3>
+                    <h3 class="text-xl font-bold mt-2 text-slate-900">Документов в пакете: {{ camp.docsCount }}</h3>
                     <p class="text-sm text-slate-500 mt-1">Ожидают вашей подписи на Шаге 1</p>
                 </div>
-                <button @click="signCampaign(camp.id)" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-xl font-medium shadow-sm">
-                    Подписать пакет
-                </button>
+                
+                <div class="flex gap-3 w-full md:w-auto">
+                    <button @click="viewSample(camp)" class="text-purple-600 bg-purple-50 hover:bg-purple-100 px-4 py-3 rounded-xl font-medium transition-colors flex-1 md:flex-none text-center">
+                        Смотреть образец
+                    </button>
+                    <button @click="signCampaign(camp.id)" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-xl font-medium shadow-sm transition-all flex-1 md:flex-none text-center">
+                        Подписать пакет
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -47,32 +53,44 @@
 
                 const fetchInbox = async () => {
                     try {
-                        // 1. Получаем все документы на шаге hr_director
                         const res = await fetch('http://localhost:8000/api/bpm/inbox?role=hr_director');
                         const docs = await res.json();
                         
-                        // 2. Группируем их по кампаниям для удобства директора
                         const map = new Map();
                         docs.forEach(doc => {
-                            if(!map.has(doc.campaign_id)) map.set(doc.campaign_id, { id: doc.campaign_id, docsCount: 0 });
+                            if(!map.has(doc.campaign_id)) {
+                                map.set(doc.campaign_id, { 
+                                    id: doc.campaign_id, 
+                                    docsCount: 0,
+                                    sample_doc: doc // <-- СОХРАНЯЕМ ПЕРВЫЙ ДОКУМЕНТ ИЗ ПАЧКИ
+                                });
+                            }
                             map.get(doc.campaign_id).docsCount++;
                         });
-                        campaigns.value = Array.from(map.values());
+                        // Сортировка по убыванию (новые сверху)
+                        campaigns.value = Array.from(map.values()).sort((a, b) => b.id - a.id);
                     } catch (e) {
                         Swal.fire('Ошибка', 'Сбой связи', 'error');
                     }
                 }
 
+                // <-- ФУНКЦИЯ ПРОСМОТРА PDF -->
+                const viewSample = (campaign) => {
+                    const doc = campaign.sample_doc;
+                    window.open(`http://localhost:8000/api/documents/${doc.user_id}/${doc.doc_id}/pdf`, '_blank');
+                }
+
                 const signCampaign = async (campaignId) => {
                     const { value: pin } = await Swal.fire({
-                        title: 'Утвердить пакет?', text: "Введите ПИН-код MSign", input: 'password', showCancelButton: true, confirmButtonColor: '#9333ea'
+                        title: 'Утвердить пакет?', text: "Введите ПИН-код MSign", input: 'password', 
+                        inputAttributes: { maxlength: 4, autocapitalize: 'off', autocorrect: 'off' },
+                        showCancelButton: true, confirmButtonColor: '#9333ea'
                     });
 
                     if (pin && pin.length === 4) {
                         try {
-                            // 1. Подписываем пачку (двигаем на Шаг 2)
+                            Swal.fire({ title: 'Подписание...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
                             await fetch(`http://localhost:8000/api/admin/campaigns/${campaignId}/sign-by-hr`, { method: 'POST' });
-                            // 2. Рассылаем письма сотрудникам
                             await fetch(`http://localhost:8000/api/admin/campaigns/${campaignId}/send-notifications`, { method: 'POST' });
                             
                             Swal.fire('Успешно', 'Пакет подписан и передан сотрудникам.', 'success');
@@ -80,11 +98,13 @@
                         } catch (e) {
                             Swal.fire('Ошибка', 'Сбой системы', 'error');
                         }
+                    } else if (pin) {
+                        Swal.fire('Ошибка', 'ПИН-код должен содержать 4 цифры', 'warning');
                     }
                 }
 
                 onMounted(() => fetchInbox());
-                return { campaigns, fetchInbox, signCampaign }
+                return { campaigns, fetchInbox, viewSample, signCampaign }
             }
         }).mount('#app')
     </script>
