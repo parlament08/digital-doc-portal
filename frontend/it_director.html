@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Панель IT-Директора | Digital Doc Portal</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen">
+    <div id="app" class="p-8 max-w-5xl mx-auto">
+        
+        <div class="flex justify-between items-center mb-10">
+            <div>
+                <span class="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide">Режим: IT-Директор</span>
+                <h1 class="text-3xl font-bold text-slate-900 mt-3">Входящие пакеты (BPM)</h1>
+                <p class="text-slate-500 mt-1">Пакетное утверждение сгруппированных документов</p>
+            </div>
+            <button @click="fetchInbox" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-xl font-medium shadow-sm transition-all flex items-center gap-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                Обновить
+            </button>
+        </div>
+
+        <div v-if="campaigns.length === 0" class="bg-white p-12 rounded-2xl shadow-sm border border-slate-100 text-center">
+            <svg class="w-16 h-16 mx-auto text-slate-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+            <h3 class="text-lg font-medium text-slate-900">Всё подписано!</h3>
+            <p class="text-slate-500 mt-1">Нет новых пакетов документов для утверждения.</p>
+        </div>
+
+        <div v-else class="grid grid-cols-1 gap-4">
+            <div v-for="camp in campaigns" :key="camp.id" class="bg-white p-6 rounded-2xl shadow-sm border border-l-4 border-l-blue-500 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                
+                <div>
+                    <div class="flex items-center gap-3 mb-2">
+                        <span class="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded">Кампания #{{ camp.id }}</span>
+                        <span class="bg-amber-100 text-amber-800 text-xs font-medium px-2 py-1 rounded">
+                            Шаг маршрута: {{ camp.workflow_step }}
+                        </span>
+                    </div>
+                    <h3 class="text-xl font-bold text-slate-900">Документов в пакете: {{ camp.docsCount }}</h3>
+                    <p class="text-sm text-slate-500 mt-1">Ожидают вашей подписи</p>
+                </div>
+
+                <div class="flex gap-3 w-full md:w-auto">
+                    <button @click="viewSample(camp)" class="text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-3 rounded-xl font-medium transition-colors flex-1 md:flex-none text-center">
+                        Смотреть образец
+                    </button>
+                    <button @click="signCampaignBatch(camp)" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 flex-1 md:flex-none">
+                        Подписать пакет (MSign)
+                    </button>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue
+        createApp({
+            setup() {
+                const campaigns = ref([]);
+
+                const fetchInbox = async () => {
+                    try {
+                        const res = await fetch('http://localhost:8000/api/bpm/inbox?role=it_director');
+                        if (!res.ok) throw new Error('Сбой API');
+                        const docs = await res.json();
+
+                        // ГРУППИРОВКА: Прячем 500 строк в 1 карточку
+                        const map = new Map();
+                        docs.forEach(doc => {
+                            if (!map.has(doc.campaign_id)) {
+                                map.set(doc.campaign_id, {
+                                    id: doc.campaign_id,
+                                    docsCount: 0,
+                                    workflow_step: doc.workflow_step,
+                                    sample_doc: doc, // Сохраняем первый документ для кнопки "Образец"
+                                    all_docs: []     // Сохраняем массив для пакетной подписи
+                                });
+                            }
+                            map.get(doc.campaign_id).docsCount++;
+                            map.get(doc.campaign_id).all_docs.push(doc);
+                        });
+                        
+                        campaigns.value = Array.from(map.values()).sort((a, b) => b.id - a.id);
+                    } catch (e) {
+                        console.error(e);
+                        Swal.fire('Ошибка', 'Не удалось загрузить инбокс', 'error');
+                    }
+                }
+
+                // Открываем PDF первого попавшегося документа из пакета
+                const viewSample = (campaign) => {
+                    const doc = campaign.sample_doc;
+                    window.open(`http://localhost:8000/api/documents/${doc.user_id}/${doc.doc_id}/pdf`, '_blank');
+                }
+
+                // ПАКЕТНОЕ ПОДПИСАНИЕ УНИВЕРСАЛЬНОГО МАРШРУТА
+                const signCampaignBatch = async (campaign) => {
+                    const result = await Swal.fire({
+                        title: `Утвердить пакет #${campaign.id}?`,
+                        text: `Количество документов: ${campaign.docsCount}. Введите ПИН-код MSign:`,
+                        input: 'password',
+                        inputAttributes: { maxlength: 4, autocapitalize: 'off', autocorrect: 'off' },
+                        showCancelButton: true,
+                        confirmButtonText: 'Подписать все',
+                        confirmButtonColor: '#2563eb',
+                        cancelButtonText: 'Отмена',
+                    });
+
+                    if (result.isConfirmed && result.value.length === 4) {
+                        try {
+                            Swal.fire({
+                                title: 'Подписание...',
+                                text: 'Документы передаются по маршруту',
+                                allowOutsideClick: false,
+                                didOpen: () => { Swal.showLoading(); }
+                            });
+
+                            // В фоне стреляем по всем документам пакета разом
+                            const signPromises = campaign.all_docs.map(doc => 
+                                fetch(`http://localhost:8000/api/bpm/documents/${doc.doc_id}/sign`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        user_id: 'SYSTEM_IT_DIR', 
+                                        role: 'it_director'       
+                                    })
+                                }).then(res => {
+                                    if (!res.ok) throw new Error();
+                                })
+                            );
+
+                            await Promise.all(signPromises);
+
+                            Swal.fire('Успешно', 'Весь пакет подписан и передан дальше!', 'success');
+                            fetchInbox(); // Пакет исчезнет из инбокса
+
+                        } catch (error) {
+                            Swal.fire('Ошибка', 'Сбой при пакетном подписании', 'error');
+                            fetchInbox(); 
+                        }
+                    } else if (result.isConfirmed) {
+                        Swal.fire('Ошибка', 'ПИН-код должен содержать 4 цифры', 'warning');
+                    }
+                }
+
+                onMounted(() => fetchInbox());
+
+                return { campaigns, fetchInbox, viewSample, signCampaignBatch }
+            }
+        }).mount('#app')
+    </script>
+</body>
+</html>

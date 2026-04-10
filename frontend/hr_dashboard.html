@@ -6,112 +6,168 @@
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <style>
+        /* Стили для зоны перетаскивания */
+        .drag-over { background-color: #eff6ff; border-color: #3b82f6; border-style: dashed; }
+        .role-card { cursor: grab; }
+        .role-card:active { cursor: grabbing; }
+    </style>
 </head>
-<body class="bg-gray-50 text-gray-800 font-sans min-h-screen">
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen">
     <div id="app" class="p-8 max-w-7xl mx-auto">
         
         <div class="flex justify-between items-center mb-10">
             <div>
-                <span class="bg-blue-100 text-blue-800 text-xs font-semibold px-2.5 py-0.5 rounded uppercase tracking-wide">Режим: HR-Специалист</span>
-                <h1 class="text-3xl font-bold text-gray-900 mt-2">Подготовка документов</h1>
-                <p class="text-gray-500 mt-1">Формирование кампаний для отправки на подпись HR-Директору</p>
+                <span class="bg-blue-100 text-blue-800 text-xs font-semibold px-2.5 py-0.5 rounded-full uppercase tracking-wide">Режим: HR-Специалист</span>
+                <h1 class="text-3xl font-bold text-slate-900 mt-3">Управление процессами (BPM)</h1>
             </div>
-            <button @click="showModal = true" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-medium shadow-sm transition-all flex items-center gap-2">
+            <button @click="openModal" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-medium shadow-sm transition-all flex items-center gap-2">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                Сформировать кампанию
+                Запустить процесс
             </button>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-            <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                <p class="text-sm text-gray-500 font-medium uppercase tracking-wider">Всего сотрудников</p>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <p class="text-sm text-slate-500 font-medium uppercase tracking-wider">Всего назначений</p>
                 <p class="text-4xl font-bold mt-2">{{ stats.total_employees || 0 }}</p>
             </div>
-            <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                <p class="text-sm text-green-600 font-medium uppercase tracking-wider">Подписано</p>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <p class="text-sm text-green-600 font-medium uppercase tracking-wider">Завершено</p>
                 <p class="text-4xl font-bold mt-2">{{ stats.signed_today || 0 }}</p>
             </div>
-            <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                <p class="text-sm text-orange-600 font-medium uppercase tracking-wider">Ожидают подписи</p>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <p class="text-sm text-amber-600 font-medium uppercase tracking-wider">В процессе</p>
                 <p class="text-4xl font-bold mt-2">{{ stats.awaiting_signature || 0 }}</p>
             </div>
         </div>
 
-        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
             <table class="w-full text-left border-collapse">
-                <thead class="bg-gray-50 border-b border-gray-100">
+                <thead class="bg-slate-50 border-b border-slate-100">
                     <tr>
-                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Сотрудник</th>
-                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Документ</th>
-                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Статус</th>
-                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Дата создания</th>
-                        <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-right">PDF</th>
+                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Сотрудник</th>
+                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Документ</th>
+                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Статус BPM</th>
+                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Дата</th>
+                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-right">Оригинал</th>
                     </tr>
                 </thead>
-                <tbody class="divide-y divide-gray-50">
-                    <tr v-for="log in auditLogs" :key="log.id" class="hover:bg-gray-50 transition-colors">
+                <tbody class="divide-y divide-slate-50">
+                    <tr v-for="log in auditLogs" :key="log.id" class="hover:bg-slate-50 transition-colors">
+                        <td class="px-6 py-4"><div class="font-medium text-slate-900">{{ log.user_id }}</div></td>
+                        <td class="px-6 py-4 text-sm text-slate-600">{{ log.document_type }}</td>
                         <td class="px-6 py-4">
-                            <div class="font-medium text-gray-900">{{ log.user_id }}</div>
-                        </td>
-                        <td class="px-6 py-4 text-sm text-gray-600">{{ log.document_type }}</td>
-                        <td class="px-6 py-4">
-                          <span :class="{
-                              'px-2 py-1 text-xs font-medium rounded-full': true,
-                              'bg-gray-100 text-gray-800': log.status === 'DRAFT',
-                              'bg-yellow-100 text-yellow-800': log.status === 'WAITING_EMPLOYEE',
-                              'bg-green-100 text-green-800': log.status === 'FULLY_SIGNED',
-                              'bg-red-100 text-red-800': log.status === 'ERROR'
-                          }">
-                              {{ log.status }}
+                          <span :class="getStatusClass(log.status)" class="px-3 py-1 text-xs font-semibold rounded-full border">
+                              {{ formatStatus(log.status) }}
                           </span>
                         </td>
-                        <td class="px-6 py-4 text-sm text-gray-500">{{ formatDate(log.created_at) }}</td>
+                        <td class="px-6 py-4 text-sm text-slate-500">{{ formatDate(log.created_at) }}</td>
                         <td class="px-6 py-4 text-right">
-                            <button @click="viewPdf(log)" class="text-blue-600 hover:text-blue-800 text-sm font-medium">Смотреть</button>
+                            <button @click="viewPdf(log)" class="text-blue-600 hover:text-blue-800 text-sm font-medium bg-blue-50 px-3 py-1.5 rounded-lg">PDF</button>
                         </td>
                     </tr>
                 </tbody>
             </table>
         </div>
 
-        <div v-if="showModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-            <div class="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl">
-                <h3 class="text-xl font-bold mb-4">Формирование пакета документов</h3>
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Название кампании</label>
-                        <input type="text" v-model="campaignTitle" class="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Например: NDA 2026">
+        <div v-if="showModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div class="bg-white rounded-2xl p-8 max-w-2xl w-full shadow-2xl max-h-[90vh] overflow-y-auto">
+                <h3 class="text-2xl font-bold mb-6 text-slate-900">Настройка маршрута</h3>
+                
+                <div class="space-y-6">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Название кампании</label>
+                            <input type="text" v-model="campaignTitle" class="w-full border border-slate-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Например: Выдача техники">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Файл (Тип)</label>
+                            <select v-model="documentType" class="w-full border border-slate-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="nda_2026">NDA 2026</option>
+                                <option value="safety_instruction_2026">Инструктаж ТБ</option>
+                                <option value="equipment_act">Акт оборудования</option>
+                            </select>
+                        </div>
                     </div>
+
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Шаблон</label>
-                        <select v-model="selectedTemplate" class="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 outline-none">
-                            <option value="safety_instruction_2026">Safety Instruction (ТБ)</option>
-                            <option value="nda_2026">Соглашение о неразглашении (NDA)</option>
-                            <option value="remote_work_policy">Политика удаленной работы</option>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Тип маршрута</label>
+                        <div class="flex bg-slate-100 p-1 rounded-xl">
+                            <button @click="routeMode = 'template'" :class="routeMode === 'template' ? 'bg-white shadow text-blue-600' : 'text-slate-500'" class="flex-1 py-2 rounded-lg font-medium transition-all text-sm">Готовый шаблон</button>
+                            <button @click="routeMode = 'custom'" :class="routeMode === 'custom' ? 'bg-white shadow text-blue-600' : 'text-slate-500'" class="flex-1 py-2 rounded-lg font-medium transition-all text-sm">Собрать вручную</button>
+                        </div>
+                    </div>
+
+                    <div v-if="routeMode === 'template'" class="bg-blue-50 p-4 rounded-xl border border-blue-100">
+                        <label class="block text-sm font-medium text-blue-800 mb-1">Выберите шаблон из базы</label>
+                        <select v-model="selectedTemplateId" class="w-full border border-blue-200 rounded-xl p-3 outline-none bg-white">
+                            <option v-for="tpl in templatesList" :key="tpl.id" :value="tpl.id">
+                                {{ tpl.name }} ({{ tpl.doc_type }})
+                            </option>
                         </select>
                     </div>
+
+                    <div v-if="routeMode === 'custom'" class="border border-slate-200 p-4 rounded-xl bg-slate-50 grid grid-cols-2 gap-6">
+                        
+                        <div>
+                            <p class="text-sm font-medium text-slate-700 mb-2">Доступные роли (Перетащите ➔)</p>
+                            <div class="space-y-2">
+                                <div v-for="role in availableRoles" :key="role.id" 
+                                     draggable="true" @dragstart="dragStart($event, role)"
+                                     class="role-card bg-white border border-slate-200 p-3 rounded-lg shadow-sm text-sm font-medium flex items-center gap-2 hover:border-blue-300">
+                                    <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                                    {{ role.name }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex flex-col h-full">
+                            <p class="text-sm font-medium text-slate-700 mb-2">Цепочка подписания</p>
+                            <div 
+                                @dragover.prevent="dragOver = true" 
+                                @dragleave="dragOver = false" 
+                                @drop="dropRole($event)"
+                                :class="{'drag-over': dragOver}"
+                                class="flex-1 border-2 border-dashed border-slate-300 rounded-xl bg-white p-2 min-h-[150px] flex flex-col gap-2 transition-colors">
+                                
+                                <div v-if="customSteps.length === 0" class="text-slate-400 text-sm text-center my-auto px-4">
+                                    Перетащите роли сюда, чтобы создать маршрут
+                                </div>
+
+                                <div v-for="(step, index) in customSteps" :key="index" class="bg-blue-50 border border-blue-100 p-2.5 rounded-lg flex justify-between items-center animate-[fadeIn_0.2s_ease-out]">
+                                    <div class="flex items-center gap-2">
+                                        <span class="bg-blue-600 text-white text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full">{{ index + 1 }}</span>
+                                        <span class="text-sm font-medium text-blue-900">{{ step.name }}</span>
+                                    </div>
+                                    <button @click="removeStep(index)" class="text-slate-400 hover:text-red-500">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Выберите сотрудников</label>
-                        <div class="space-y-2 max-h-32 overflow-y-auto border border-gray-200 rounded-lg p-3">
-                            <label class="flex items-center gap-2 cursor-pointer">
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Сотрудники (Финальные подписанты)</label>
+                        <div class="space-y-2 max-h-32 overflow-y-auto border border-slate-200 rounded-xl p-3 bg-white">
+                            <label class="flex items-center gap-3 cursor-pointer p-1 hover:bg-slate-50 rounded">
                                 <input type="checkbox" value="emp_001" v-model="selectedUsers" class="rounded text-blue-600 focus:ring-blue-500 w-4 h-4">
-                                <span class="text-sm">emp_001 (Andrey)</span>
+                                <span class="text-sm font-medium">emp_001 (Andrey)</span>
                             </label>
-                            <label class="flex items-center gap-2 cursor-pointer">
+                            <label class="flex items-center gap-3 cursor-pointer p-1 hover:bg-slate-50 rounded">
                                 <input type="checkbox" value="emp_002" v-model="selectedUsers" class="rounded text-blue-600 focus:ring-blue-500 w-4 h-4">
-                                <span class="text-sm">emp_002 (Yury)</span>
-                            </label>
-                            <label class="flex items-center gap-2 cursor-pointer">
-                                <input type="checkbox" value="emp_003" v-model="selectedUsers" class="rounded text-blue-600 focus:ring-blue-500 w-4 h-4">
-                                <span class="text-sm">emp_003 (Anna)</span>
+                                <span class="text-sm font-medium">emp_002 (Yury)</span>
                             </label>
                         </div>
                     </div>
                 </div>
+
                 <div class="mt-8 flex gap-3">
-                    <button @click="showModal = false" class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Отмена</button>
-                    <button @click="createCampaign" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" :disabled="isProcessing">
-                        {{ isProcessing ? 'Создание...' : 'Создать черновики' }}
+                    <button @click="showModal = false" class="flex-1 px-4 py-3 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-50 font-medium transition-colors">Отмена</button>
+                    <button @click="createCampaign" class="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-medium transition-colors flex justify-center items-center gap-2" :disabled="isProcessing">
+                        <span v-if="isProcessing" class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                        {{ isProcessing ? 'Запуск...' : 'Сформировать' }}
                     </button>
                 </div>
             </div>
@@ -126,33 +182,78 @@
                 const showModal = ref(false);
                 const isProcessing = ref(false);
                 
-                // Новые переменные для кампании
-                const campaignTitle = ref('Пакет NDA 2026');
-                const selectedTemplate = ref('nda_2026');
-                const selectedUsers = ref([]); // Теперь это массив
-                
+                const campaignTitle = ref('');
+                const documentType = ref('nda_2026'); // Общий тип документа для кастомных маршрутов
+                const selectedUsers = ref([]); 
                 const stats = ref({ total_employees: 0, signed_today: 0, awaiting_signature: 0 });
+
+                // --- ЛОГИКА КОНСТРУКТОРА ---
+                const routeMode = ref('template'); // 'template' или 'custom'
+                
+                // Для режима Template
+                const templatesList = ref([]);
+                const selectedTemplateId = ref(null); 
+                
+                // Для режима Custom
+                const dragOver = ref(false);
+                const availableRoles = ref([
+                    { id: 'hr_director', name: 'HR-Директор' },
+                    { id: 'it_director', name: 'IT-Директор' },
+                    { id: 'sys_admin', name: 'Сисадмин' },
+                    { id: 'accounting', name: 'Бухгалтерия' },
+                    { id: 'employee', name: 'Сотрудник (Целевой)' }
+                ]);
+                const customSteps = ref([]);
+                let draggedRoleData = null;
+
+                const dragStart = (event, role) => {
+                    draggedRoleData = role;
+                    event.dataTransfer.effectAllowed = 'copy';
+                }
+
+                const dropRole = (event) => {
+                    dragOver.value = false;
+                    if (draggedRoleData) {
+                        // Добавляем копию роли в маршрут
+                        customSteps.value.push({ ...draggedRoleData });
+                        draggedRoleData = null;
+                    }
+                }
+
+                const removeStep = (index) => {
+                    customSteps.value.splice(index, 1);
+                }
+                // ----------------------------
 
                 const fetchLogs = async () => {
                     try {
                         const response = await fetch('http://localhost:8000/api/documents/all');
-                        if (response.ok) {
-                            auditLogs.value = await response.json();
-                        }
-                    } catch (e) {
-                        console.error("Ошибка загрузки логов:", e);
-                    }
+                        if (response.ok) auditLogs.value = await response.json();
+                    } catch (e) { console.error(e); }
                 }
 
                 const fetchStats = async () => {
                   try {
                       const response = await fetch('http://localhost:8000/api/admin/stats');
-                      if (response.ok) {
-                          stats.value = await response.json();
-                      }
-                  } catch (e) {
-                      console.error("Ошибка загрузки статистики:", e);
-                  }
+                      if (response.ok) stats.value = await response.json();
+                  } catch (e) { console.error(e); }
+                }
+
+                const fetchTemplates = async () => {
+                    try {
+                        const response = await fetch('http://localhost:8000/api/bpm/templates');
+                        if (response.ok) {
+                            templatesList.value = await response.json();
+                            if (templatesList.value.length > 0) selectedTemplateId.value = templatesList.value[0].id;
+                        }
+                    } catch (e) { console.error(e); }
+                }
+
+                const openModal = () => {
+                    campaignTitle.value = '';
+                    selectedUsers.value = [];
+                    customSteps.value = []; // Очищаем кастомный маршрут
+                    showModal.value = true;
                 }
 
                 const formatDate = (dateStr) => {
@@ -160,52 +261,67 @@
                     return new Date(dateStr).toLocaleString();
                 }
 
+                const getStatusClass = (status) => {
+                    if (!status || status === 'DRAFT') return 'bg-slate-100 text-slate-800 border-slate-200';
+                    if (status === 'FULLY_SIGNED') return 'bg-green-50 text-green-700 border-green-200';
+                    return 'bg-amber-50 text-amber-700 border-amber-200';
+                }
+
+                const formatStatus = (status) => {
+                    if (status === 'DRAFT') return 'Сгенерирован (Шаг 1)';
+                    if (status === 'IN_PROGRESS') return 'В процессе маршрута';
+                    if (status === 'FULLY_SIGNED') return 'Документ закрыт';
+                    if (status && status.startsWith('SIGNED_STEP_')) return `Подписан (${status.replace('SIGNED_STEP_', 'Шаг ')})`;
+                    return status;
+                }
+
                 const viewPdf = (log) => {
-                    // Заглушка для просмотра PDF
                     window.open(`http://localhost:8000/api/documents/${log.user_id}/${log.id}/pdf`, '_blank');
                 }
 
-                // Новая логика создания кампании (только DRAFT)
                 const createCampaign = async () => {
                     if (selectedUsers.value.length === 0) {
-                        Swal.fire('Ошибка', 'Выберите хотя бы одного сотрудника', 'warning');
-                        return;
+                        return Swal.fire('Ошибка', 'Выберите хотя бы одного сотрудника', 'warning');
+                    }
+                    if (routeMode.value === 'template' && !selectedTemplateId.value) {
+                        return Swal.fire('Ошибка', 'Выберите готовый маршрут', 'warning');
+                    }
+                    if (routeMode.value === 'custom' && customSteps.value.length === 0) {
+                        return Swal.fire('Ошибка', 'Перетащите хотя бы одну роль для создания маршрута', 'warning');
                     }
 
                     isProcessing.value = true;
+                    
+                    // Формируем умный Payload
+                    const payload = {
+                        title: campaignTitle.value || 'Новая кампания',
+                        document_type: documentType.value,
+                        employee_ids: selectedUsers.value
+                    };
+
+                    if (routeMode.value === 'template') {
+                        payload.template_id = selectedTemplateId.value;
+                    } else {
+                        // Достаем только ID ролей по порядку
+                        payload.custom_steps = customSteps.value.map(step => step.id);
+                    }
+
                     try {
                         const response = await fetch('http://localhost:8000/api/admin/campaigns/create', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                title: campaignTitle.value,
-                                document_type: selectedTemplate.value,
-                                hr_director_id: 'hr_dir_001', // Статично для MVP
-                                employee_ids: selectedUsers.value
-                            })
+                            body: JSON.stringify(payload)
                         });
 
                         if (response.ok) {
-                            await Promise.all([fetchLogs(), fetchStats()]);
+                            await Promise.all([fetchLogs(), fetchStats(), fetchTemplates()]); // Обновляем и список шаблонов тоже!
                             showModal.value = false;
-                            
-                            // Очищаем форму
-                            selectedUsers.value = [];
-                            campaignTitle.value = '';
-
-                            Swal.fire({
-                                title: 'Черновики созданы!',
-                                text: 'Кампания передана на подпись HR-Директору.',
-                                icon: 'success',
-                                confirmButtonColor: '#2563eb',
-                                timer: 3000
-                            });
+                            Swal.fire('Успех', 'Документы отправлены по маршруту', 'success');
                         } else {
                             const err = await response.json();
                             Swal.fire('Ошибка', err.detail || 'Не удалось создать кампанию', 'error');
                         }
                     } catch (error) {
-                        console.error('Ошибка сети:', error);
                         Swal.fire('Ошибка сети', 'Бэкенд недоступен', 'error');
                     } finally {
                         isProcessing.value = false;
@@ -215,11 +331,15 @@
                 onMounted(() => {
                   fetchLogs();
                   fetchStats();
+                  fetchTemplates();
                 });
 
                 return { 
-                    auditLogs, showModal, isProcessing, formatDate, viewPdf, 
-                    createCampaign, campaignTitle, selectedUsers, selectedTemplate, stats 
+                    auditLogs, showModal, isProcessing, openModal, formatDate, viewPdf, 
+                    createCampaign, campaignTitle, documentType, selectedUsers, stats,
+                    routeMode, templatesList, selectedTemplateId, // Переменные режимов
+                    availableRoles, customSteps, dragStart, dropRole, removeStep, dragOver, // Конструктор
+                    getStatusClass, formatStatus
                 }
             }
         }).mount('#app')

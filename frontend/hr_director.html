@@ -2,240 +2,89 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Панель HR-Директора | Digital Doc Portal</title>
+    <title>HR-Директор | Digital Doc Portal</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
-<body class="bg-gray-50 text-gray-800 font-sans min-h-screen">
-    <div id="app" class="p-8 max-w-7xl mx-auto">
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen">
+    <div id="app" class="p-8 max-w-5xl mx-auto">
         
         <div class="flex justify-between items-center mb-10">
             <div>
-                <span class="bg-purple-100 text-purple-800 text-xs font-semibold px-2.5 py-0.5 rounded uppercase tracking-wide">Режим: HR-Директор</span>
-                <h1 class="text-3xl font-bold text-gray-900 mt-2">Согласование документов</h1>
-                <p class="text-gray-500 mt-1">Подписание кампаний от лица работодателя и запуск рассылки</p>
+                <span class="bg-purple-100 text-purple-800 text-xs font-bold px-3 py-1 rounded-full uppercase">Режим: HR-Директор</span>
+                <h1 class="text-3xl font-bold text-slate-900 mt-3">Утверждение пакетов (BPM)</h1>
             </div>
-            <button @click="fetchPendingCampaigns" class="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-xl font-medium shadow-sm transition-all flex items-center gap-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            <button @click="fetchInbox" class="bg-white border border-slate-300 hover:bg-slate-50 px-4 py-2 rounded-xl font-medium">
                 Обновить
             </button>
         </div>
 
-        <div v-if="pendingCampaigns.length === 0" class="bg-white p-12 rounded-2xl shadow-sm border border-gray-100 text-center">
-            <svg class="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-            <h3 class="text-lg font-medium text-gray-900">Всё подписано!</h3>
-            <p class="text-gray-500 mt-1">Нет кампаний, ожидающих вашей подписи (DRAFT).</p>
+        <div v-if="campaigns.length === 0" class="bg-white p-12 rounded-2xl shadow-sm border border-slate-100 text-center">
+            <h3 class="text-lg font-medium">Всё подписано!</h3>
         </div>
 
-        <div v-else class="grid grid-cols-1 gap-6">
-            <div v-for="campaign in pendingCampaigns" :key="campaign.id" class="bg-white p-6 rounded-2xl shadow-sm border border-l-4 border-l-purple-500 flex flex-col md:flex-row items-center justify-between gap-6 hover:shadow-md transition-shadow">
-                
-                <div class="flex-1">
-                    <div class="flex items-center gap-3 mb-2">
-                        <span class="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">Кампания #{{ campaign.id }}</span>
-                        <span class="bg-blue-50 text-blue-700 text-xs font-semibold px-2 py-1 rounded">{{ campaign.type }}</span>
-                        <span class="bg-yellow-100 text-yellow-800 text-xs font-medium px-2 py-1 rounded flex items-center gap-1">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                            Ожидает вашей подписи
-                        </span>
-                    </div>
-                    <h3 class="text-xl font-bold text-gray-900">Пакет документов ({{ campaign.employees.length }} сотр.)</h3>
-                    <p class="text-sm text-gray-500 mt-1">
-                        <strong>Получатели:</strong> {{ campaign.employees.join(', ') }}
-                    </p>
-                    <p class="text-xs text-gray-400 mt-1">Создано: {{ formatDate(campaign.created_at) }}</p>
+        <div v-else class="grid grid-cols-1 gap-4">
+            <div v-for="camp in campaigns" :key="camp.id" class="bg-white p-6 rounded-2xl shadow-sm border border-l-4 border-l-purple-500 flex items-center justify-between">
+                <div>
+                    <span class="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded">Кампания #{{ camp.id }}</span>
+                    <h3 class="text-xl font-bold mt-2">Документов в пакете: {{ camp.docsCount }}</h3>
+                    <p class="text-sm text-slate-500 mt-1">Ожидают вашей подписи на Шаге 1</p>
                 </div>
-
-                <div class="w-full md:w-auto flex flex-col sm:flex-row gap-3">
-                    <button @click="initiateSign(campaign.id)" :disabled="processingId === campaign.id" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 min-w-[200px]">
-                        <span v-if="processingId === campaign.id" class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
-                        <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
-                        {{ processingId === campaign.id ? 'Обработка...' : 'Подписать и Разослать' }}
-                    </button>
-                </div>
-
-            </div>
-        </div>
-
-        <div v-if="showPinModal" class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-50">
-            <div class="bg-white rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center relative overflow-hidden">
-                <div class="absolute top-0 left-0 w-full h-2 bg-purple-600"></div>
-                
-                <h3 class="text-2xl font-bold text-gray-900 mb-1">MSign Директора</h3>
-                <p class="text-sm text-gray-500 mb-6">Массовое подписание документов компании</p>
-                
-                <p class="text-gray-700 font-medium mb-4">Введите 4-значный PIN-код:</p>
-                
-                <div class="flex justify-center gap-3 mb-8">
-                    <input type="password" maxlength="1" v-model="pin1" ref="pin1Ref" @input="focusNext($event, 'pin2Ref')" class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none">
-                    <input type="password" maxlength="1" v-model="pin2" ref="pin2Ref" @input="focusNext($event, 'pin3Ref')" class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none">
-                    <input type="password" maxlength="1" v-model="pin3" ref="pin3Ref" @input="focusNext($event, 'pin4Ref')" class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none">
-                    <input type="password" maxlength="1" v-model="pin4" ref="pin4Ref" class="w-12 h-14 text-center text-2xl font-bold border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none">
-                </div>
-                
-                <div class="flex gap-3">
-                    <button @click="closePinModal" class="flex-1 py-3 text-gray-600 bg-gray-100 rounded-xl font-medium hover:bg-gray-200 transition-colors">Отмена</button>
-                    <button @click="executeSignAndSend" :disabled="!isPinValid || isSigning" class="flex-1 py-3 text-white bg-purple-600 rounded-xl font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center">
-                        <span v-if="isSigning" class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
-                        <span v-else>Подтвердить</span>
-                    </button>
-                </div>
+                <button @click="signCampaign(camp.id)" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-xl font-medium shadow-sm">
+                    Подписать пакет
+                </button>
             </div>
         </div>
 
     </div>
 
     <script>
-        const { createApp, ref, onMounted, computed } = Vue
+        const { createApp, ref, onMounted } = Vue
         createApp({
             setup() {
-                const pendingCampaigns = ref([]);
-                const processingId = ref(null);
-                
-                // State для модалки MSign
-                const showPinModal = ref(false);
-                const isSigning = ref(false);
-                const activeCampaignId = ref(null);
-                const pin1 = ref('');
-                const pin2 = ref('');
-                const pin3 = ref('');
-                const pin4 = ref('');
+                const campaigns = ref([]);
 
-                // Форматирование даты
-                const formatDate = (dateStr) => {
-                    if (!dateStr) return '-';
-                    return new Date(dateStr).toLocaleString();
-                }
-
-                // Проверка валидности ПИН-кода
-                const isPinValid = computed(() => {
-                    return pin1.value && pin2.value && pin3.value && pin4.value;
-                });
-
-                // Фокус на следующий инпут при вводе
-                const focusNext = (event, nextRefName) => {
-                    if (event.target.value.length === 1) {
-                        const nextEl = document.querySelector(`input[v-model="${nextRefName.replace('Ref', '')}"]`);
-                        if(nextEl) nextEl.focus();
-                    }
-                }
-
-                const closePinModal = () => {
-                    showPinModal.value = false;
-                    activeCampaignId.value = null;
-                    pin1.value = pin2.value = pin3.value = pin4.value = '';
-                }
-
-                // Открытие модалки для конкретной кампании
-                const initiateSign = (campaignId) => {
-                    activeCampaignId.value = campaignId;
-                    showPinModal.value = true;
-                }
-
-                // Получаем кампании
-                const fetchPendingCampaigns = async () => {
+                const fetchInbox = async () => {
                     try {
-                        const response = await fetch('http://localhost:8000/api/documents/all');
-                        if (!response.ok) throw new Error('Ошибка загрузки логов');
+                        // 1. Получаем все документы на шаге hr_director
+                        const res = await fetch('http://localhost:8000/api/bpm/inbox?role=hr_director');
+                        const docs = await res.json();
                         
-                        const logs = await response.json();
-                        
-                        const processedCampaignIds = new Set();
-                        logs.forEach(log => {
-                            if (log.status === 'WAITING_EMPLOYEE' || log.status === 'FULLY_SIGNED') {
-                                if (log.metadata_info?.campaign_id) {
-                                    processedCampaignIds.add(log.metadata_info.campaign_id);
-                                }
-                            }
+                        // 2. Группируем их по кампаниям для удобства директора
+                        const map = new Map();
+                        docs.forEach(doc => {
+                            if(!map.has(doc.campaign_id)) map.set(doc.campaign_id, { id: doc.campaign_id, docsCount: 0 });
+                            map.get(doc.campaign_id).docsCount++;
                         });
-
-                        const drafts = logs.filter(log => 
-                            (log.status === 'DRAFT' || log.status === 'PDF_GENERATED') && 
-                            !processedCampaignIds.has(log.metadata_info?.campaign_id)
-                        );
-                        
-                        const campaignsMap = new Map();
-                        
-                        drafts.forEach(log => {
-                            const cid = log.metadata_info?.campaign_id;
-                            if (cid) {
-                                if (!campaignsMap.has(cid)) {
-                                    campaignsMap.set(cid, {
-                                        id: cid,
-                                        type: log.document_type,
-                                        created_at: log.created_at,
-                                        employees: [] 
-                                    });
-                                }
-                                if (!campaignsMap.get(cid).employees.includes(log.user_id)) {
-                                    campaignsMap.get(cid).employees.push(log.user_id);
-                                }
-                            }
-                        });
-
-                        pendingCampaigns.value = Array.from(campaignsMap.values());
+                        campaigns.value = Array.from(map.values());
                     } catch (e) {
-                        console.error("Ошибка при получении кампаний:", e);
-                        Swal.fire('Сбой связи', 'Не удалось загрузить список кампаний', 'error');
+                        Swal.fire('Ошибка', 'Сбой связи', 'error');
                     }
                 }
 
-                // Финальное подписание после ввода ПИН
-                const executeSignAndSend = async () => {
-                    if (!activeCampaignId.value) return;
-                    
-                    const campaignId = activeCampaignId.value;
-                    isSigning.value = true;
-                    processingId.value = campaignId;
+                const signCampaign = async (campaignId) => {
+                    const { value: pin } = await Swal.fire({
+                        title: 'Утвердить пакет?', text: "Введите ПИН-код MSign", input: 'password', showCancelButton: true, confirmButtonColor: '#9333ea'
+                    });
 
-                    try {
-                        // 1. Подписываем кампанию (HR-Director)
-                        const signRes = await fetch(`http://localhost:8000/api/admin/campaigns/${campaignId}/sign-by-hr`, {
-                            method: 'POST'
-                        });
-                        
-                        if (!signRes.ok) throw new Error('Ошибка при подписании');
-
-                        // 2. Вызываем рассылку (Mailpit/Celery)
-                        const sendRes = await fetch(`http://localhost:8000/api/admin/campaigns/${campaignId}/send-notifications`, {
-                            method: 'POST'
-                        });
-
-                        if (!sendRes.ok) throw new Error('Ошибка при рассылке писем');
-
-                        closePinModal();
-
-                        // Успех!
-                        Swal.fire({
-                            title: 'Успешно!',
-                            text: 'Документы подписаны работодателем и отправлены сотрудникам.',
-                            icon: 'success',
-                            confirmButtonColor: '#9333ea',
-                            timer: 3000
-                        });
-
-                        await fetchPendingCampaigns();
-
-                    } catch (error) {
-                        console.error('Ошибка:', error);
-                        closePinModal();
-                        Swal.fire('Системная ошибка', 'Не удалось завершить операцию', 'error');
-                    } finally {
-                        isSigning.value = false;
-                        processingId.value = null;
+                    if (pin && pin.length === 4) {
+                        try {
+                            // 1. Подписываем пачку (двигаем на Шаг 2)
+                            await fetch(`http://localhost:8000/api/admin/campaigns/${campaignId}/sign-by-hr`, { method: 'POST' });
+                            // 2. Рассылаем письма сотрудникам
+                            await fetch(`http://localhost:8000/api/admin/campaigns/${campaignId}/send-notifications`, { method: 'POST' });
+                            
+                            Swal.fire('Успешно', 'Пакет подписан и передан сотрудникам.', 'success');
+                            fetchInbox();
+                        } catch (e) {
+                            Swal.fire('Ошибка', 'Сбой системы', 'error');
+                        }
                     }
                 }
 
-                onMounted(() => {
-                    fetchPendingCampaigns();
-                });
-
-                return { 
-                    pendingCampaigns, processingId, formatDate, 
-                    showPinModal, isSigning, pin1, pin2, pin3, pin4, isPinValid,
-                    fetchPendingCampaigns, initiateSign, closePinModal, focusNext, executeSignAndSend
-                }
+                onMounted(() => fetchInbox());
+                return { campaigns, fetchInbox, signCampaign }
             }
         }).mount('#app')
     </script>

@@ -18,6 +18,7 @@ class CampaignStatus(str, enum.Enum):
 class DocStatus(str, enum.Enum):
     DRAFT = "DRAFT"                       # PDF рендерится или ждет HR-Директора
     WAITING_EMPLOYEE = "WAITING_EMPLOYEE" # HR-Директор подписал, появилось в кабинете
+    IN_PROGRESS = "IN_PROGRESS"           
     FULLY_SIGNED = "FULLY_SIGNED"         # Сотрудник подписал через MSign
     ERROR = "ERROR"                       # Ошибка при генерации/подписании
 
@@ -76,3 +77,12 @@ class AssignedDocument(Base):
 
     # Обратная связь с кампанией
     campaign = relationship("DocumentCampaign", back_populates="documents")
+
+    # Ссылка на шаблон маршрута, по которому идет этот документ
+    workflow_template_id = Column(Integer, ForeignKey("workflow_templates.id"), nullable=True)
+    
+    # Текущий шаг (начинаем всегда с 1)
+    current_step_order = Column(Integer, default=1)
+    
+    # Связь для удобного доступа к шаблону через ORM
+    workflow_template = relationship("WorkflowTemplate")
