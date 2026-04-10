@@ -30,15 +30,15 @@
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
                 <p class="text-sm text-slate-500 font-medium uppercase tracking-wider">Всего назначений</p>
-                <p class="text-4xl font-bold mt-2">{{ stats.total_employees || 0 }}</p>
+                <p class="text-4xl font-bold mt-2">{{ stats.total_employees }}</p>
             </div>
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
                 <p class="text-sm text-green-600 font-medium uppercase tracking-wider">Завершено</p>
-                <p class="text-4xl font-bold mt-2">{{ stats.signed_today || 0 }}</p>
+                <p class="text-4xl font-bold mt-2">{{ stats.signed_today }}</p>
             </div>
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
                 <p class="text-sm text-amber-600 font-medium uppercase tracking-wider">В процессе</p>
-                <p class="text-4xl font-bold mt-2">{{ stats.awaiting_signature || 0 }}</p>
+                <p class="text-4xl font-bold mt-2">{{ stats.awaiting_signature }}</p>
             </div>
         </div>
 
@@ -185,7 +185,17 @@
                 const auditLogs = ref([]);
                 const showModal = ref(false);
                 const isProcessing = ref(false);
-                const stats = ref({ total_employees: 0, signed_today: 0, awaiting_signature: 0 });
+                
+                // РЕАКТИВНЫЕ СЧЕТЧИКИ: Считаем прямо из таблицы
+                const stats = computed(() => {
+                    const docs = auditLogs.value;
+                    const completed = docs.filter(d => d.status === 'FULLY_SIGNED').length;
+                    return {
+                        total_employees: docs.length,
+                        signed_today: completed,
+                        awaiting_signature: docs.length - completed
+                    };
+                });
                 
                 const campaignTitle = ref('');
                 const documentType = ref('nda_2026');
@@ -228,14 +238,12 @@
                 };
                 const removeStep = (idx) => { customSteps.value.splice(idx, 1); };
 
+                // Оставили только загрузку логов и шаблонов (загрузку статистики удалили)
                 const fetchLogs = async () => {
                     const r = await fetch('http://localhost:8000/api/documents/all');
                     if (r.ok) auditLogs.value = await r.json();
                 };
-                const fetchStats = async () => {
-                    const r = await fetch('http://localhost:8000/api/admin/stats');
-                    if (r.ok) stats.value = await r.json();
-                };
+                
                 const fetchTemplates = async () => {
                     const r = await fetch('http://localhost:8000/api/bpm/templates');
                     if (r.ok) {
@@ -247,7 +255,17 @@
                 const createCampaign = async () => {
                     if (selectedUsers.value.length === 0) return Swal.fire('Ошибка', 'Выберите сотрудников', 'warning');
                     isProcessing.value = true;
-                    const payload = { title: campaignTitle.value || 'Без названия', employee_ids: selectedUsers.value };
+                    
+                    let finalTitle = campaignTitle.value;
+                    if (!finalTitle) {
+                        if (routeMode.value === 'template' && selectedTemplate.value) {
+                            finalTitle = selectedTemplate.value.name;
+                        } else {
+                            finalTitle = 'Новая кампания';
+                        }
+                    }
+
+                    const payload = { title: finalTitle, employee_ids: selectedUsers.value };
                     if (routeMode.value === 'template') {
                         payload.template_id = selectedTemplateId.value;
                     } else {
@@ -261,7 +279,7 @@
                             body: JSON.stringify(payload)
                         });
                         if (r.ok) {
-                            fetchLogs(); fetchStats();
+                            fetchLogs(); // Загружаем новую таблицу, счетчики обновятся сами
                             showModal.value = false;
                             Swal.fire('Успех', 'Процесс запущен', 'success');
                         }
@@ -270,29 +288,31 @@
                 }
 
                 const openModal = () => {
-                    // 1. Очищаем текстовые поля и списки
                     campaignTitle.value = '';
                     selectedUsers.value = [];
                     customSteps.value = [];
-                    
-                    // 2. Сбрасываем режим на "Готовый шаблон"
                     routeMode.value = 'template';
-                    
-                    // 3. ПРИНУДИТЕЛЬНО устанавливаем первый шаблон из списка
-                    // Это гарантирует, что selectedTemplateId синхронизируется с интерфейсом
                     if (templatesList.value.length > 0) {
                         selectedTemplateId.value = templatesList.value[0].id;
                     }
-
-                    // 4. Только теперь показываем окно
                     showModal.value = true;
                 };
-                const formatDate = (s) => s ? new Date(s).toLocaleString() : '-';
+
+                // Исправленное форматирование даты
+                const formatDate = (dateStr) => {
+                    if (!dateStr) return '-';
+                    const date = new Date(dateStr);
+                    return new Intl.DateTimeFormat('ru-RU', {
+                        day: '2-digit', month: '2-digit', year: 'numeric', 
+                        hour: '2-digit', minute: '2-digit', second: '2-digit'
+                    }).format(date);
+                };
+
                 const getStatusClass = (s) => (s === 'FULLY_SIGNED' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200');
                 const formatStatus = (s) => (s === 'FULLY_SIGNED' ? 'Завершен' : 'В процессе');
                 const viewPdf = (l) => window.open(`http://localhost:8000/api/documents/${l.user_id}/${l.id}/pdf`, '_blank');
 
-                onMounted(() => { fetchLogs(); fetchStats(); fetchTemplates(); });
+                onMounted(() => { fetchLogs(); fetchTemplates(); });
 
                 return { 
                     auditLogs, showModal, isProcessing, campaignTitle, documentType, selectedUsers, stats,
