@@ -42,21 +42,42 @@
             </div>
         </div>
 
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-            <table class="w-full text-left border-collapse">
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col">
+            
+            <div class="p-4 border-b border-slate-100 bg-slate-50 flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div class="flex items-center gap-3 w-full sm:w-auto">
+                    <span class="text-sm font-medium text-slate-500">Фильтр:</span>
+                    <select v-model="filterType" class="bg-white border border-slate-300 text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 w-full sm:w-auto">
+                        <option value="">Все типы документов</option>
+                        <option v-for="type in uniqueDocTypes" :key="type" :value="type">{{ type }}</option>
+                    </select>
+                </div>
+                <div class="relative w-full sm:w-64">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    </span>
+                    <input type="text" v-model="searchQuery" placeholder="Поиск (Сотрудник, Файл)..." class="w-full bg-white border border-slate-300 text-sm rounded-lg pl-9 pr-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+            </div>
+
+            <div v-if="paginatedLogs.length === 0" class="p-12 text-center text-slate-400">
+                <p class="text-lg font-medium">Записи не найдены.</p>
+            </div>
+
+            <table v-else class="w-full text-left border-collapse">
                 <thead class="bg-slate-50 border-b border-slate-100">
                     <tr>
                         <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Сотрудник</th>
-                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Документ</th>
+                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Документ (Тип файла)</th>
                         <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Статус BPM</th>
-                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Дата</th>
+                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Дата обновления</th>
                         <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-right">Оригинал</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-50">
-                    <tr v-for="log in auditLogs" :key="log.id" class="hover:bg-slate-50 transition-colors">
-                        <td class="px-6 py-4 font-medium text-slate-900">{{ log.user_id }}</td>
-                        <td class="px-6 py-4 text-sm text-slate-600">{{ log.document_type }}</td>
+                    <tr v-for="log in paginatedLogs" :key="log.id" class="hover:bg-slate-50 transition-colors">
+                        <td class="px-6 py-4 font-bold text-slate-900">{{ log.user_id }}</td>
+                        <td class="px-6 py-4 text-sm text-slate-600 font-mono">{{ log.document_type }}</td>
                         <td class="px-6 py-4">
                           <span :class="getStatusClass(log.status)" class="px-3 py-1 text-xs font-semibold rounded-full border">
                               {{ formatStatus(log.status) }}
@@ -64,11 +85,21 @@
                         </td>
                         <td class="px-6 py-4 text-sm text-slate-500">{{ formatDate(log.created_at) }}</td>
                         <td class="px-6 py-4 text-right">
-                            <button @click="viewPdf(log)" class="text-blue-600 hover:text-blue-800 text-sm font-medium bg-blue-50 px-3 py-1.5 rounded-lg">PDF</button>
+                            <button @click="viewPdf(log)" class="text-blue-600 hover:text-blue-800 text-sm font-medium bg-blue-50 hover:bg-blue-100 transition-colors px-3 py-1.5 rounded-lg">Смотреть PDF</button>
                         </td>
                     </tr>
                 </tbody>
             </table>
+
+            <div class="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center text-sm text-slate-600">
+                <span>Показано <b>{{ paginatedLogs.length }}</b> из <b>{{ filteredLogs.length }}</b> записей</span>
+                <div class="flex items-center gap-2">
+                    <button @click="prevPage" :disabled="currentPage === 1" class="px-3 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed">Пред</button>
+                    <span class="font-medium px-2">Стр. {{ currentPage }} из {{ totalPages }}</span>
+                    <button @click="nextPage" :disabled="currentPage === totalPages" class="px-3 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed">След</button>
+                </div>
+            </div>
+
         </div>
 
         <div v-if="showModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -179,14 +210,15 @@
     </div>
 
     <script>
-        const { createApp, ref, onMounted, computed } = Vue
+        // ИМПОРТИРОВАН WATCH ДЛЯ ПАГИНАЦИИ
+        const { createApp, ref, onMounted, computed, watch } = Vue
         createApp({
             setup() {
                 const auditLogs = ref([]);
                 const showModal = ref(false);
                 const isProcessing = ref(false);
                 
-                // РЕАКТИВНЫЕ СЧЕТЧИКИ: Считаем прямо из таблицы
+                // РЕАКТИВНЫЕ СЧЕТЧИКИ (Считаются по ВСЕМ логам)
                 const stats = computed(() => {
                     const docs = auditLogs.value;
                     const completed = docs.filter(d => d.status === 'FULLY_SIGNED').length;
@@ -197,6 +229,54 @@
                     };
                 });
                 
+                // --- ЛОГИКА ТАБЛИЦЫ: ПОИСК, ФИЛЬТР, ПАГИНАЦИЯ ---
+                const searchQuery = ref('');
+                const filterType = ref('');
+                const currentPage = ref(1);
+                const itemsPerPage = 10;
+
+                const uniqueDocTypes = computed(() => {
+                    const types = new Set(auditLogs.value.map(doc => doc.document_type));
+                    return Array.from(types);
+                });
+
+                const filteredLogs = computed(() => {
+                    let result = auditLogs.value;
+                    
+                    // Фильтр
+                    if (filterType.value) {
+                        result = result.filter(d => d.document_type === filterType.value);
+                    }
+                    
+                    // Поиск
+                    if (searchQuery.value) {
+                        const q = searchQuery.value.toLowerCase();
+                        result = result.filter(d => 
+                            d.user_id.toLowerCase().includes(q) || 
+                            d.document_type.toLowerCase().includes(q)
+                        );
+                    }
+                    return result;
+                });
+
+                const totalPages = computed(() => {
+                    return Math.ceil(filteredLogs.value.length / itemsPerPage) || 1;
+                });
+
+                const paginatedLogs = computed(() => {
+                    const start = (currentPage.value - 1) * itemsPerPage;
+                    const end = start + itemsPerPage;
+                    return filteredLogs.value.slice(start, end);
+                });
+
+                const nextPage = () => { if (currentPage.value < totalPages.value) currentPage.value++; };
+                const prevPage = () => { if (currentPage.value > 1) currentPage.value--; };
+
+                watch([searchQuery, filterType], () => {
+                    currentPage.value = 1;
+                });
+                // ------------------------------------------------
+
                 const campaignTitle = ref('');
                 const documentType = ref('nda_2026');
                 const selectedUsers = ref([]); 
@@ -238,7 +318,6 @@
                 };
                 const removeStep = (idx) => { customSteps.value.splice(idx, 1); };
 
-                // Оставили только загрузку логов и шаблонов (загрузку статистики удалили)
                 const fetchLogs = async () => {
                     const r = await fetch('http://localhost:8000/api/documents/all');
                     if (r.ok) auditLogs.value = await r.json();
@@ -279,7 +358,7 @@
                             body: JSON.stringify(payload)
                         });
                         if (r.ok) {
-                            fetchLogs(); // Загружаем новую таблицу, счетчики обновятся сами
+                            fetchLogs();
                             showModal.value = false;
                             Swal.fire('Успех', 'Процесс запущен', 'success');
                         }
@@ -298,7 +377,6 @@
                     showModal.value = true;
                 };
 
-                // Исправленное форматирование даты
                 const formatDate = (dateStr) => {
                     if (!dateStr) return '-';
                     const date = new Date(dateStr);
@@ -318,7 +396,10 @@
                     auditLogs, showModal, isProcessing, campaignTitle, documentType, selectedUsers, stats,
                     routeMode, templatesList, selectedTemplateId, selectedTemplate, formatRoleName,
                     availableRoles, customSteps, dragStart, dropRole, removeStep, dragOver,
-                    openModal, formatDate, viewPdf, createCampaign, getStatusClass, formatStatus
+                    openModal, formatDate, viewPdf, createCampaign, getStatusClass, formatStatus,
+                    // Экспорт новых свойств для умной таблицы
+                    searchQuery, filterType, uniqueDocTypes, paginatedLogs, 
+                    currentPage, totalPages, filteredLogs, nextPage, prevPage
                 }
             }
         }).mount('#app')

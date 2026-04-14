@@ -2,109 +2,294 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>HR-Директор | Digital Doc Portal</title>
+    <title>Кабинет HR-Директора | Digital Doc Portal</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <style>[v-cloak] { display: none; }</style>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans min-h-screen">
-    <div id="app" class="p-8 max-w-5xl mx-auto">
+    <div id="app" class="p-8 max-w-6xl mx-auto" v-cloak>
         
-        <div class="flex justify-between items-center mb-10">
+        <div class="flex justify-between items-center mb-8">
             <div>
-                <span class="bg-purple-100 text-purple-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide">Режим: HR-Директор</span>
-                <h1 class="text-3xl font-bold text-slate-900 mt-3">Утверждение пакетов (BPM)</h1>
+                <span class="bg-purple-100 text-purple-800 text-xs font-semibold px-2.5 py-0.5 rounded-full uppercase tracking-wide">Роль: HR-Директор</span>
+                <h1 class="text-3xl font-bold text-slate-900 mt-3">Панель руководителя</h1>
             </div>
-            <button @click="fetchInbox" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-xl font-medium transition-colors">
+            <button @click="loadData" class="text-slate-500 hover:text-blue-600 transition-colors flex items-center gap-2 bg-white px-4 py-2 rounded-xl border shadow-sm">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                 Обновить
             </button>
         </div>
 
-        <div v-if="campaigns.length === 0" class="bg-white p-12 rounded-2xl shadow-sm border border-slate-100 text-center">
-            <h3 class="text-lg font-medium text-slate-900">Всё подписано!</h3>
+        <div class="flex space-x-2 border-b border-slate-200 mb-6">
+            <button @click="activeTab = 'inbox'" 
+                    :class="activeTab === 'inbox' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-slate-500 hover:text-slate-700'"
+                    class="pb-4 px-4 font-semibold text-sm transition-colors flex items-center gap-2">
+                Входящие пакеты
+                <span v-if="campaigns.length > 0" class="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full">{{ campaigns.length }}</span>
+            </button>
+            <button @click="activeTab = 'archive'" 
+                    :class="activeTab === 'archive' ? 'border-b-2 border-purple-600 text-purple-600' : 'text-slate-500 hover:text-slate-700'"
+                    class="pb-4 px-4 font-semibold text-sm transition-colors flex items-center gap-2">
+                Архив документов
+                <span class="bg-slate-100 text-slate-600 text-[10px] px-2 py-0.5 rounded-full">{{ archiveDocs.length }}</span>
+            </button>
         </div>
 
-        <div v-else class="grid grid-cols-1 gap-4">
-            <div v-for="camp in campaigns" :key="camp.id" class="bg-white p-6 rounded-2xl shadow-sm border border-l-4 border-l-purple-500 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                <div>
-                    <span class="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded">Кампания #{{ camp.id }}</span>
-                    <h3 class="text-xl font-bold mt-2 text-slate-900">Документов в пакете: {{ camp.docsCount }}</h3>
-                    <p class="text-sm text-slate-500 mt-1">Ожидают вашей подписи на Шаге 1</p>
-                </div>
-                
-                <div class="flex gap-3 w-full md:w-auto">
-                    <button @click="viewSample(camp)" class="text-purple-600 bg-purple-50 hover:bg-purple-100 px-4 py-3 rounded-xl font-medium transition-colors flex-1 md:flex-none text-center">
-                        Смотреть образец
-                    </button>
-                    <button @click="signCampaign(camp.id)" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-xl font-medium shadow-sm transition-all flex-1 md:flex-none text-center">
-                        Подписать пакет
-                    </button>
+        <div v-if="activeTab === 'inbox'">
+            <div v-if="campaigns.length === 0" class="bg-white p-12 rounded-2xl shadow-sm border border-slate-100 text-center">
+                <svg class="w-16 h-16 mx-auto text-slate-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+                <h3 class="text-lg font-medium text-slate-900">Всё подписано!</h3>
+                <p class="text-slate-500 mt-1">Нет новых пакетов документов для утверждения.</p>
+            </div>
+
+            <div v-else class="grid grid-cols-1 gap-4">
+                <div v-for="camp in campaigns" :key="camp.id" class="bg-white p-6 rounded-2xl shadow-sm border border-l-4 border-l-purple-500 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                    
+                    <div>
+                        <div class="flex items-center gap-3 mb-2">
+                            <span class="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded">Пакет #{{ camp.id }}</span>
+                            <span class="bg-amber-100 text-amber-800 text-xs font-medium px-2 py-1 rounded">Шаг маршрута: {{ camp.workflow_step }}</span>
+                            <span class="text-xs font-mono text-blue-500 uppercase">{{ camp.document_type }}</span>
+                        </div>
+                        <h3 class="text-xl font-bold text-slate-900">{{ camp.title }}</h3>
+                        <p class="text-sm text-slate-500 mt-1">Документов к подписи: <b class="text-slate-700">{{ camp.docsCount }}</b></p>
+                    </div>
+
+                    <div class="flex gap-3 w-full md:w-auto">
+                        <button @click="viewSample(camp)" class="text-slate-600 bg-slate-100 hover:bg-slate-200 px-4 py-3 rounded-xl font-medium transition-colors flex-1 md:flex-none text-center">
+                            Смотреть образец
+                        </button>
+                        <button @click="signCampaignBatch(camp)" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 flex-1 md:flex-none">
+                            Подписать пакет (MSign)
+                        </button>
+                    </div>
                 </div>
             </div>
+        </div>
+
+        <div v-if="activeTab === 'archive'" class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col">
+            
+            <div class="p-4 border-b border-slate-100 bg-slate-50 flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div class="flex items-center gap-3 w-full sm:w-auto">
+                    <span class="text-sm font-medium text-slate-500">Фильтр:</span>
+                    <select v-model="filterType" class="bg-white border border-slate-300 text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-purple-500 w-full sm:w-auto">
+                        <option value="">Все типы документов</option>
+                        <option v-for="type in uniqueDocTypes" :key="type" :value="type">{{ type }}</option>
+                    </select>
+                </div>
+                <div class="relative w-full sm:w-64">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    </span>
+                    <input type="text" v-model="searchQuery" placeholder="Поиск (Сотрудник, Документ)..." class="w-full bg-white border border-slate-300 text-sm rounded-lg pl-9 pr-3 py-2 outline-none focus:ring-2 focus:ring-purple-500">
+                </div>
+            </div>
+
+            <div v-if="paginatedDocs.length === 0" class="p-12 text-center text-slate-400">
+                <p class="text-lg font-medium">Записи не найдены.</p>
+            </div>
+
+            <table v-else class="w-full text-left border-collapse">
+                <thead class="bg-slate-50 border-b border-slate-100">
+                    <tr>
+                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Сотрудник</th>
+                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Документ</th>
+                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Статус</th>
+                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Дата завершения</th>
+                        <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-right">Файл</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-50">
+                    <tr v-for="doc in paginatedDocs" :key="doc.doc_id" class="hover:bg-slate-50 transition-colors">
+                        <td class="px-6 py-4 font-bold text-slate-900">{{ doc.user_id }}</td>
+                        <td class="px-6 py-4">
+                            <p class="text-sm font-semibold text-slate-800">{{ doc.title }}</p>
+                            <p class="text-[10px] font-mono text-slate-400 uppercase mt-1">{{ doc.document_type }}</p>
+                        </td>
+                        <td class="px-6 py-4">
+                            <span class="bg-green-50 text-green-700 border border-green-200 px-3 py-1 text-xs font-semibold rounded-full">Завершен</span>
+                        </td>
+                        <td class="px-6 py-4 text-sm text-slate-500">{{ formatDate(doc.signed_at) }}</td>
+                        <td class="px-6 py-4 text-right">
+                            <button @click="viewArchivedPdf(doc)" class="text-purple-600 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">Смотреть PDF</button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center text-sm text-slate-600">
+                <span>Показано <b>{{ paginatedDocs.length }}</b> из <b>{{ filteredDocs.length }}</b> записей</span>
+                <div class="flex items-center gap-2">
+                    <button @click="prevPage" :disabled="currentPage === 1" class="px-3 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed">Пред</button>
+                    <span class="font-medium px-2">Стр. {{ currentPage }} из {{ totalPages }}</span>
+                    <button @click="nextPage" :disabled="currentPage === totalPages" class="px-3 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed">След</button>
+                </div>
+            </div>
+
         </div>
 
     </div>
 
     <script>
-        const { createApp, ref, onMounted } = Vue
+        const { createApp, ref, computed, watch, onMounted } = Vue
         createApp({
             setup() {
-                const campaigns = ref([]);
+                const currentRole = 'hr_director';
+                const activeTab = ref('inbox');
+                const campaigns = ref([]); // ИЗМЕНЕНО: теперь используем campaigns вместо inboxDocs
+                const archiveDocs = ref([]);
 
-                const fetchInbox = async () => {
-                    try {
-                        const res = await fetch('http://localhost:8000/api/bpm/inbox?role=hr_director');
-                        const docs = await res.json();
-                        
-                        const map = new Map();
-                        docs.forEach(doc => {
-                            if(!map.has(doc.campaign_id)) {
-                                map.set(doc.campaign_id, { 
-                                    id: doc.campaign_id, 
-                                    docsCount: 0,
-                                    sample_doc: doc // <-- СОХРАНЯЕМ ПЕРВЫЙ ДОКУМЕНТ ИЗ ПАЧКИ
-                                });
-                            }
-                            map.get(doc.campaign_id).docsCount++;
-                        });
-                        // Сортировка по убыванию (новые сверху)
-                        campaigns.value = Array.from(map.values()).sort((a, b) => b.id - a.id);
-                    } catch (e) {
-                        Swal.fire('Ошибка', 'Сбой связи', 'error');
+                // --- ЛОГИКА ТАБЛИЦЫ: ПОИСК, ФИЛЬТР, ПАГИНАЦИЯ ---
+                const searchQuery = ref('');
+                const filterType = ref('');
+                const currentPage = ref(1);
+                const itemsPerPage = 10;
+
+                const uniqueDocTypes = computed(() => {
+                    const types = new Set(archiveDocs.value.map(doc => doc.document_type));
+                    return Array.from(types);
+                });
+
+                const filteredDocs = computed(() => {
+                    let result = archiveDocs.value;
+                    if (filterType.value) {
+                        result = result.filter(d => d.document_type === filterType.value);
                     }
-                }
+                    if (searchQuery.value) {
+                        const q = searchQuery.value.toLowerCase();
+                        result = result.filter(d => 
+                            d.user_id.toLowerCase().includes(q) || 
+                            d.title.toLowerCase().includes(q) ||
+                            d.document_type.toLowerCase().includes(q)
+                        );
+                    }
+                    return result;
+                });
 
-                // <-- ФУНКЦИЯ ПРОСМОТРА PDF -->
+                const totalPages = computed(() => {
+                    return Math.ceil(filteredDocs.value.length / itemsPerPage) || 1;
+                });
+
+                const paginatedDocs = computed(() => {
+                    const start = (currentPage.value - 1) * itemsPerPage;
+                    const end = start + itemsPerPage;
+                    return filteredDocs.value.slice(start, end);
+                });
+
+                const nextPage = () => { if (currentPage.value < totalPages.value) currentPage.value++; };
+                const prevPage = () => { if (currentPage.value > 1) currentPage.value--; };
+
+                watch([searchQuery, filterType], () => {
+                    currentPage.value = 1;
+                });
+                // ------------------------------------------------
+
+                const loadData = async () => {
+                    // ИЗМЕНЕНО: Грузим Инбокс с группировкой по кампаниям (как у IT-директора)
+                    try {
+                        const resInbox = await fetch(`http://localhost:8000/api/bpm/inbox?role=${currentRole}`);
+                        if (resInbox.ok) {
+                            const docs = await resInbox.json();
+                            const map = new Map();
+                            docs.forEach(doc => {
+                                if (!map.has(doc.campaign_id)) {
+                                    map.set(doc.campaign_id, {
+                                        id: doc.campaign_id,
+                                        title: doc.title,
+                                        document_type: doc.document_type,
+                                        docsCount: 0,
+                                        workflow_step: doc.workflow_step,
+                                        sample_doc: doc,
+                                        all_docs: []
+                                    });
+                                }
+                                map.get(doc.campaign_id).docsCount++;
+                                map.get(doc.campaign_id).all_docs.push(doc);
+                            });
+                            campaigns.value = Array.from(map.values()).sort((a, b) => b.id - a.id);
+                        }
+                    } catch (e) { console.error('Ошибка инбокса', e); }
+
+                    try {
+                        const resArchive = await fetch(`http://localhost:8000/api/bpm/archive?role=${currentRole}`);
+                        if (resArchive.ok) archiveDocs.value = await resArchive.json();
+                    } catch (e) { console.error('Ошибка архива', e); }
+                };
+
+                // ИЗМЕНЕНО: Новая функция пакетной подписи (1 запрос на бэкенд)
+                const signCampaignBatch = async (campaign) => {
+                    const result = await Swal.fire({
+                        title: `Утвердить пакет #${campaign.id}?`,
+                        text: `Количество документов: ${campaign.docsCount}. Введите ПИН-код MSign:`,
+                        input: 'password',
+                        inputAttributes: { maxlength: 4, autocapitalize: 'off', autocorrect: 'off' },
+                        showCancelButton: true,
+                        confirmButtonText: 'Подписать все',
+                        confirmButtonColor: '#2563eb',
+                        cancelButtonText: 'Отмена',
+                    });
+
+                    if (result.isConfirmed && result.value.length === 4) {
+                        try {
+                            Swal.fire({
+                                title: 'Подписание...',
+                                text: 'Документы передаются по маршруту',
+                                allowOutsideClick: false,
+                                didOpen: () => { Swal.showLoading(); }
+                            });
+
+                            // Вызываем новый эндпоинт пакетной подписи
+                            const res = await fetch(`http://localhost:8000/api/bpm/campaigns/${campaign.id}/sign`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    user_id: 'SYSTEM_HR_DIR', 
+                                    role: currentRole       
+                                })
+                            });
+
+                            if (!res.ok) throw new Error('Ошибка сервера');
+
+                            const data = await res.json();
+
+                            Swal.fire('Успешно', `Подписано документов: ${data.signed_count}. Пакет передан дальше!`, 'success');
+                            loadData(); 
+
+                        } catch (error) {
+                            Swal.fire('Ошибка', 'Сбой при пакетном подписании', 'error');
+                            loadData(); 
+                        }
+                    } else if (result.isConfirmed) {
+                        Swal.fire('Ошибка', 'ПИН-код должен содержать 4 цифры', 'warning');
+                    }
+                };
+
                 const viewSample = (campaign) => {
                     const doc = campaign.sample_doc;
                     window.open(`http://localhost:8000/api/documents/${doc.user_id}/${doc.doc_id}/pdf`, '_blank');
+                };
+
+                const viewArchivedPdf = (doc) => {
+                    window.open(`http://localhost:8000/api/documents/${doc.user_id}/${doc.doc_id}/pdf`, '_blank');
+                };
+
+                const formatDate = (dateStr) => {
+                    if (!dateStr) return '-';
+                    return new Intl.DateTimeFormat('ru-RU', {
+                        day: '2-digit', month: '2-digit', year: 'numeric', 
+                        hour: '2-digit', minute: '2-digit'
+                    }).format(new Date(dateStr));
+                };
+
+                onMounted(() => loadData());
+
+                return { 
+                    activeTab, campaigns, archiveDocs, loadData, signCampaignBatch, viewSample, viewArchivedPdf, formatDate,
+                    searchQuery, filterType, uniqueDocTypes, paginatedDocs, 
+                    currentPage, totalPages, filteredDocs, nextPage, prevPage
                 }
-
-                const signCampaign = async (campaignId) => {
-                    const { value: pin } = await Swal.fire({
-                        title: 'Утвердить пакет?', text: "Введите ПИН-код MSign", input: 'password', 
-                        inputAttributes: { maxlength: 4, autocapitalize: 'off', autocorrect: 'off' },
-                        showCancelButton: true, confirmButtonColor: '#9333ea'
-                    });
-
-                    if (pin && pin.length === 4) {
-                        try {
-                            Swal.fire({ title: 'Подписание...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
-                            await fetch(`http://localhost:8000/api/admin/campaigns/${campaignId}/sign-by-hr`, { method: 'POST' });
-                            await fetch(`http://localhost:8000/api/admin/campaigns/${campaignId}/send-notifications`, { method: 'POST' });
-                            
-                            Swal.fire('Успешно', 'Пакет подписан и передан сотрудникам.', 'success');
-                            fetchInbox();
-                        } catch (e) {
-                            Swal.fire('Ошибка', 'Сбой системы', 'error');
-                        }
-                    } else if (pin) {
-                        Swal.fire('Ошибка', 'ПИН-код должен содержать 4 цифры', 'warning');
-                    }
-                }
-
-                onMounted(() => fetchInbox());
-                return { campaigns, fetchInbox, viewSample, signCampaign }
             }
         }).mount('#app')
     </script>

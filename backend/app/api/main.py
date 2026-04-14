@@ -126,6 +126,36 @@ def get_universal_inbox(role: str, user_id: str = None, db: Session = Depends(ge
     return inbox
 
 
+@app.get("/api/bpm/archive")
+def get_universal_archive(role: str, db: Session = Depends(get_db)):
+    """
+    Архив завершенных документов. 
+    Для директоров (hr_director, it_director) отдаем все завершенные документы компании.
+    """
+    # Если нужно, здесь можно добавить логику: IT-директор видит только IT-документы.
+    # Но пока делаем прозрачный архив для топ-менеджмента.
+    
+    results = db.query(models.AssignedDocument, models.DocumentCampaign).join(
+        models.DocumentCampaign, 
+        models.AssignedDocument.campaign_id == models.DocumentCampaign.id
+    ).filter(
+        models.AssignedDocument.status == "FULLY_SIGNED" # Берем только финализированные
+    ).order_by(models.AssignedDocument.updated_at.desc()).limit(100).all() # Ограничим до 100 последних
+    
+    archive = []
+    for doc, campaign in results:
+        archive.append({
+            "doc_id": doc.id,
+            "campaign_id": doc.campaign_id,
+            "user_id": doc.user_id,
+            "document_type": campaign.document_type,
+            "title": campaign.title or "Без названия",
+            # Берем время последней подписи
+            "signed_at": doc.updated_at.isoformat() if doc.updated_at else doc.created_at.isoformat()
+        })
+    return archive
+
+
 @app.post("/api/bpm/documents/{doc_id}/sign")
 def universal_sign_document(doc_id: int, req: SignRequest, db: Session = Depends(get_db)):
     """Универсальная подпись. Подходит для ЛЮБОГО шага и ЛЮБОЙ роли."""
@@ -168,6 +198,56 @@ def universal_sign_document(doc_id: int, req: SignRequest, db: Session = Depends
     db.commit()
     return {"status": "success", "message": "Подписано!", "is_final": step.is_final, "next_step": doc.current_step_order}
 
+@app.post("/api/bpm/campaigns/{campaign_id}/sign")
+def sign_campaign_batch(campaign_id: int, req: SignRequest, db: Session = Depends(get_db)):
+    """
+    Пакетная подпись: переводит ВСЕ документы одной кампании на следующий шаг за 1 запрос.
+    """
+    # 1. Берем все неподписанные документы этой кампании
+    docs = db.query(models.AssignedDocument).filter(
+        models.AssignedDocument.campaign_id == campaign_id,
+        models.AssignedDocument.status != "FULLY_SIGNED"
+    ).all()
+
+    if not docs:
+        raise HTTPException(status_code=404, detail="Нет документов для подписания")
+
+    signed_count = 0
+    for doc in docs:
+        # Проверяем текущий шаг маршрута для каждого документа
+        step = db.query(models.WorkflowStep).filter(
+            models.WorkflowStep.template_id == doc.workflow_template_id,
+            models.WorkflowStep.step_order == doc.current_step_order
+        ).first()
+
+        # Если шаг существует и требует именно эту роль — подписываем!
+        if step and step.role_required == req.role:
+            
+            # Пишем лог ДО того, как изменим шаг (чтобы зафиксировать, какой шаг подписали)
+            new_log = models.AuditTrail(
+                user_id=req.user_id,
+                document_type=doc.campaign.document_type if doc.campaign else "bpm_doc",
+                status=f"SIGNED_STEP_{doc.current_step_order}",
+                metadata_info={"action": f"batch_signed_by_{req.role}", "campaign_id": campaign_id}
+            )
+            db.add(new_log)
+
+            # Двигаем документ
+            if step.is_final:
+                doc.status = "FULLY_SIGNED"
+            else:
+                doc.current_step_order += 1
+                doc.status = "IN_PROGRESS"
+                
+            signed_count += 1
+
+    if signed_count == 0:
+        raise HTTPException(status_code=400, detail="В этом пакете нет документов, ожидающих вашу подпись")
+
+    # 2. Сохраняем все 500 изменений ОДНОЙ транзакцией
+    db.commit()
+    
+    return {"status": "success", "signed_count": signed_count}
 
 # ==========================================
 # СТАРЫЕ ЭНДПОИНТЫ (Адаптированные под BPM)
