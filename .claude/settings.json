@@ -1,8 +1,12 @@
 {
   "permissions": {
-    "deny": [
-      ".env",
-      "docker-compose.yml"
-    ]
-  }
+    "deny": [".env", "docker-compose.yml"]
+  },
+  "tools": [
+    {
+      "name": "check_translation",
+      "description": "Run this to verify if TASK-1 is complete. It searches for Russian text.",
+      "command": "./.claude/skills/check_translation.sh"
+    }
+  ]
 }
